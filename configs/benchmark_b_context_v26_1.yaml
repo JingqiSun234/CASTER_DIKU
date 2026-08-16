@@ -1,0 +1,79 @@
+schema_version: 1
+contract_version: caster_benchmark_b_context_v26_1
+task:
+  task_id: benchmark_b_pooled
+  dataset: benchmark_b
+  query: Jointly forecast weekly COVID-19 and influenza hospital admissions across US jurisdictions with one shared posterior.
+  entity_column: jurisdiction
+  time_column: week_end
+  entity_count: 51
+  cadence_days: 7
+  target_components: [covid_adm_per100k, flu_adm_per100k]
+  direct_horizons: [1, 2]
+  rollout_horizons: [1, 2, 3, 4]
+  release_lag_steps: 1
+  posterior_scope: pooled_shared_posterior
+  posterior_count: 1
+  split_basis: forecast_origin
+  selection_freeze_time: '2025-08-23'
+  test_start: '2025-09-20'
+
+panel:
+  source: data/benchmark_b/raw_all/gold/panel_weekly_wide.parquet
+  source_metadata: data/benchmark_b/raw_all/gold/panel_weekly_wide.metadata.json
+  output: data/benchmark_b/curated_v26_1_release_lag1/benchmark_b_pooled/weekly_panel.csv
+  history_scope: all_rows_released_no_later_than_forecast_origin
+  router_input: structured_summary_only_no_raw_sequence
+  adapter_input: origin_visible_values_timestamps_release_times_and_missing_masks
+
+streams:
+  target:
+    columns: [covid_adm_count, covid_adm_per100k, flu_adm_count, flu_adm_per100k]
+    release_lag_days: 7
+    release_time_status: benchmark_finalized_abstraction
+    formal_status: supported
+  ed:
+    column_prefixes: [nssp_]
+    release_lag_days: 28
+    release_time_status: fixed_release_time_unavailable_conservative_lag
+    spatial_semantics: national_snapshot_broadcast_to_jurisdictions
+    formal_status: supported_with_conservative_lag
+  wastewater:
+    column_prefixes: [flua_ww_, rsv_ww_]
+    release_lag_days: 28
+    release_time_status: fixed_release_time_unavailable_conservative_lag
+    formal_status: supported_with_conservative_lag
+  calendar:
+    columns: [weekofyear, weekofyear_sin, weekofyear_cos]
+    release_lag_days: 0
+    release_time_status: deterministic_from_timestamp
+    formal_status: supported
+  autoregressive:
+    column_patterns: [_lag, _roll]
+    release_lag_days: 0
+    release_time_status: strict_prior_target_only_same_time_ingest_before_forecast
+    formal_status: supported
+
+excluded_streams:
+  preliminary:
+    formal_status: unsupported_diagnostic_only
+    reason: reliable fixed release times are unavailable
+  variants:
+    formal_status: unsupported_diagnostic_only
+    reason: auxiliary extension with no origin-faithful release history
+
+causal_order:
+  same_time: ingest_releases_then_build_context_then_issue_forecast
+  feature_cutoff: feature_release_time_lte_forecast_origin
+  released_batch: previous_update_time_lt_release_time_lte_current_update_time
+  posterior_update_inputs: frozen_forecast_archive_and_released_batch_only
+  posterior_current_x_forbidden: true
+
+artifact_invalidation:
+  fingerprint_fields:
+    - context_contract_sha256
+    - panel_sha256
+    - ledger_sha256
+    - frozen_selection_packet_sha256
+    - candidate_registry_sha256
+  mismatch_policy: fail_closed_do_not_reuse_forecast_posterior_or_agent_output

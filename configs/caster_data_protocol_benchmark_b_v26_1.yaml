@@ -1,0 +1,38 @@
+schema_version: 1
+protocol_version: caster_data_protocol_v26_1
+benchmark_b:
+  source_panel: data/benchmark_b/raw_all/gold/panel_weekly_wide.parquet
+  source_panel_metadata: data/benchmark_b/raw_all/gold/panel_weekly_wide.metadata.json
+  context_contract: configs/benchmark_b_context_v26_1.yaml
+  output_dir: data/benchmark_b/curated_v26_1_release_lag1/benchmark_b_pooled
+  task_id: benchmark_b_pooled
+  cadence_days: 7
+  minimum_origin_history_steps: 9
+  minimum_origin_history_role: forecast_origin_eligibility_only_not_adapter_input_window
+  release_lag_steps: 1
+  release_policy: target_time_plus_one_weekly_cadence_benchmark_abstraction
+  split_basis: forecast_origin
+  first_origin: '2022-11-26'
+  train_end: '2025-03-08'
+  validation_start: '2025-03-15'
+  validation_end: '2025-08-16'
+  embargo_start: '2025-08-23'
+  embargo_end: '2025-09-13'
+  test_start: '2025-09-20'
+  test_end: '2026-02-28'
+  selection_freeze_time: '2025-08-23'
+  runner_stages: [train, val, embargo, test]
+  forecast_issuance_splits: [train, val, embargo, test]
+  parameter_selection_splits: [val]
+  result_metric_splits: [test]
+  posterior_update_splits: [train, val, embargo, test]
+  embargo_policy: issue_forecast_unscored_no_parameter_selection_then_update_posterior_after_release
+  modes:
+    direct_1w2w:
+      mode_kind: direct
+      forecast_strategy: direct
+      horizons: [1, 2]
+    rollout_4w:
+      mode_kind: autoregressive
+      forecast_strategy: recursive_rollout
+      horizons: [1, 2, 3, 4]

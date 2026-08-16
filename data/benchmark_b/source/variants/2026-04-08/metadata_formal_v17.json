@@ -1,0 +1,11 @@
+{
+  "source": "variants",
+  "dataset_id": "jr58-6ysp",
+  "label": "CDC SARS-CoV-2 Variant Proportions",
+  "url": "https://data.cdc.gov/resource/jr58-6ysp.csv",
+  "fetched_at": "2026-04-08T19:35:56+00:00",
+  "sha256": "599c3fc2859bf3d163fa88074a79e1143d9a56bbffc8ad50c4706411c09104bf",
+  "row_count": 4421502,
+  "run_date": "2026-04-08",
+  "notes": "Socrata paginated CSV export; 89 page(s); page_size=50000. The raw file contains both USA-level and HHS-region records. Formal diagnostic-event construction selects USA-level smoothed biweekly rows only; no state-level mapping is used. No public issue-date history; variants are diagnostic-only and do not enter forecast covariates or posterior evidence."
+}

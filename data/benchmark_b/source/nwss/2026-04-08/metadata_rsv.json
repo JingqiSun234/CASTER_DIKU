@@ -1,0 +1,11 @@
+{
+  "source": "nwss",
+  "dataset_id": "nwssrsvstateactivitylevel",
+  "label": "CDC NWSS RSV Wastewater - State Activity Levels",
+  "url": "https://www.cdc.gov/wcms/vizdata/NCEZID_DIDRI/rsv/nwssrsvstateactivitylevel.csv",
+  "fetched_at": "2026-04-08T19:31:19+00:00",
+  "sha256": "45e75b1f92a7334743dc620336b2bf570671f8d335589fde1dd7fd350580246d",
+  "row_count": 12739,
+  "run_date": "2026-04-08",
+  "notes": "Direct CSV export from the CDC NWSS RSV state-trend page. Contains state/territory wastewater viral activity levels (WVAL). No public issue-date history; the formal v26.1 benchmark assigns the conservative 28-day lag recorded in configs/benchmark_b_context_v26_1.yaml."
+}

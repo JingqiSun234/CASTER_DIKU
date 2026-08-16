@@ -1,0 +1,39 @@
+split_policy: time_ordered_anchor_week
+no_random_row_split: true
+min_history_weeks: 8
+
+direct:
+  horizons: [1, 2]
+  anchor_start: "2022-11-26"
+  anchor_end: "2026-03-14"
+  train:
+    end: "2025-03-15"
+  val:
+    start: "2025-03-22"
+    end: "2025-09-13"
+  test:
+    start: "2025-09-20"
+
+rollout:
+  horizons: [4]
+  anchor_start: "2022-11-26"
+  anchor_end: "2026-02-28"
+  train:
+    end: "2025-03-08"
+  val:
+    start: "2025-03-15"
+    end: "2025-08-30"
+  test:
+    start: "2025-09-06"
+
+expected_counts:
+  direct:
+    total_rows: 35092
+    train_rows: 24382
+    val_rows: 5304
+    test_rows: 5406
+  rollout_h4:
+    total_rows: 17276
+    train_rows: 12074
+    val_rows: 2550
+    test_rows: 2652

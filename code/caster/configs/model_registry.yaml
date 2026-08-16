@@ -1,0 +1,352 @@
+
+candidates:
+  - model_id: last_value
+    family: statistical
+    candidate_type: last_value
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.LastValueAdapter
+    hyperparams: {}
+    description: mechanism=latest-value persistence at every forecast horizon; inputs=per-series target observations released by the forecast origin; fit_scope=no fitted parameters; update=recomputed independently at each origin with point-forecast feedback for recursive horizons; uncertainty=Gaussian marginal proxy from released-history first-difference scale with a positive floor; limitation=does not represent trend, seasonality, covariates, or joint path dependence
+    repo_url: ""
+    enabled: true
+    priority: 10
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: seasonal_naive
+    family: statistical
+    candidate_type: seasonal_naive
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.SeasonalNaiveAdapter
+    hyperparams: {daily_season_length: 7, weekly_season_length: 8}
+    description: mechanism=calendar-lag persistence using target time minus 7 days at daily cadence or minus 8 weeks at weekly cadence; inputs=per-series released target observations with timestamps; fit_scope=no fitted parameters; update=exact lag lookup repeated for each origin and target horizon; uncertainty=Gaussian marginal proxy from released-history first-difference scale; limitation=requires an observation at the exact lag and structural-prefix placeholders are excluded from selection and readout
+    repo_url: ""
+    enabled: true
+    priority: 12
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: drift
+    family: state_space
+    candidate_type: local_drift
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.DriftAdapter
+    hyperparams: {}
+    description: mechanism=latest level plus the first-to-last average increment extrapolated over the horizon; inputs=per-series target observations released by the forecast origin; fit_scope=closed-form per-series calculation with no optimized parameters; update=recomputed at each origin with one-step mean feedback for recursive horizons; uncertainty=Gaussian marginal proxy from first-difference variance multiplied by horizon; limitation=uses one constant full-history slope and has no seasonal or covariate term
+    repo_url: ""
+    enabled: true
+    priority: 20
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: covariate_drift
+    family: state_space
+    candidate_type: causal_covariate_drift
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.CovariateDriftAdapter
+    hyperparams: {covariate_gain: 0.15, covariate_damping: 0.90}
+    description: mechanism=closed-form endpoint drift plus a damped fixed-gain robust-momentum adjustment from auxiliary inputs; inputs=per-series released target history and origin-available emergency-department, wastewater, calendar, lagged and rolling target, and mobility-summary signals when present; fit_scope=endpoint drift is recomputed without fitted coefficients, while covariate gain 0.15 and damping 0.90 are held fixed across series and origins; update=the endpoint drift and auxiliary signal are recomputed at each origin, and recursive horizons append each predicted mean before the next one-step forecast; uncertainty=Gaussian marginal proxy from floored first-difference variance scaled by the evaluated forecast horizon plus a deterministic covariate-adjustment variance term; limitation=all usable auxiliary inputs are reduced to one scalar by median aggregation of clipped robust-momentum summaries
+    repo_url: ""
+    enabled: true
+    priority: 21
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: sir_tau
+    family: compartmental
+    candidate_type: SIR
+    seed: 0
+    adapter_path: caster.adapters.sir_seir.SIRAdapter
+    hyperparams: {population: 1000000, gamma: 0.2, reporting_rate: 0.04, transition_mode: stochastic_binomial, n_simulations: 64, log_beta_rw_scale: 0.0, log_gamma_rw_scale: 0.0}
+    description: mechanism=discrete-time stochastic SIR incidence simulation with binomial infection and recovery transitions; inputs=per-series target observations released by the forecast origin; fit_scope=states and beta initialized from recent history with fixed population 1000000, gamma 0.2, and reporting rate 0.04; update=reinitialized at each origin and simulated over each requested direct or recursive step; uncertainty=mean and sample variance from 64 seeded transition trajectories plus an observation-variance floor; limitation=population, reporting, compartments, and rates are heuristic rather than estimated from covariates or demography
+    repo_url: ""
+    enabled: true
+    priority: 30
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: seir_tau
+    family: compartmental
+    candidate_type: SEIR
+    seed: 0
+    adapter_path: caster.adapters.sir_seir.SEIRAdapter
+    hyperparams: {population: 1000000, gamma: 0.2, sigma: 0.3333333333, reporting_rate: 0.04, transition_mode: stochastic_binomial, n_simulations: 64, log_beta_rw_scale: 0.0, log_gamma_rw_scale: 0.0}
+    description: mechanism=discrete-time stochastic SEIR incidence simulation with binomial exposure, incubation, and recovery transitions; inputs=per-series target observations released by the forecast origin; fit_scope=states and beta initialized from recent history with fixed population 1000000, sigma 0.3333333333, gamma 0.2, and reporting rate 0.04; update=reinitialized at each origin and simulated over each requested direct or recursive step; uncertainty=mean and sample variance from 64 seeded transition trajectories plus an observation-variance floor; limitation=population, reporting, compartments, and rates are heuristic rather than estimated from covariates or demography
+    repo_url: ""
+    enabled: true
+    priority: 35
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: seirs_tau
+    family: compartmental
+    candidate_type: SEIRS
+    seed: 0
+    adapter_path: caster.adapters.sir_seir.SEIRSAdapter
+    hyperparams: {population: 1000000, gamma: 0.2, sigma: 0.3333333333, waning_rate: 0.0055555556, reporting_rate: 0.04, transition_mode: stochastic_binomial, n_simulations: 64, log_beta_rw_scale: 0.0, log_gamma_rw_scale: 0.0}
+    description: mechanism=discrete-time stochastic SEIRS incidence simulation with binomial exposure, incubation, recovery, and waning-immunity transitions; inputs=per-series target observations released by the forecast origin; fit_scope=states and beta initialized from recent history with fixed population, incubation, recovery, waning, and reporting rates; update=reinitialized at each origin and simulated over each requested direct or recursive step; uncertainty=mean and sample variance from 64 seeded transition trajectories plus an observation-variance floor; limitation=fixed population and rate assumptions are not estimated from covariates or demography
+    repo_url: ""
+    enabled: true
+    priority: 36
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: tv_seir_rt
+    family: compartmental
+    candidate_type: time_varying_SEIR
+    seed: 0
+    adapter_path: caster.adapters.sir_seir.TimeVaryingSEIRAdapter
+    hyperparams: {population: 1000000, gamma: 0.2, sigma: 0.3333333333, reporting_rate: 0.04, transition_mode: stochastic_binomial, n_simulations: 64, log_beta_rw_scale: 0.05, log_gamma_rw_scale: 0.05}
+    description: mechanism=stochastic SEIR incidence simulation with binomial compartment transitions and zero-drift log-beta and log-gamma random walks; inputs=per-series target observations released by the forecast origin; fit_scope=states and initial rates derived from recent history with fixed population, incubation, reporting, and random-walk scales; update=reinitialized at each origin and advances both log rates with standard deviation 0.05 within 64 seeded trajectories; uncertainty=trajectory sample variance plus an observation-variance floor; limitation=random-walk scales, population, reporting rate, and compartment initialization are fixed rather than learned
+    repo_url: ""
+    enabled: true
+    priority: 37
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: renewal_rt
+    family: renewal
+    candidate_type: renewal_rt
+    seed: 0
+    adapter_path: caster.adapters.renewal_rt.RenewalAdapter
+    hyperparams: {serial_interval: [0.05, 0.15, 0.30, 0.25, 0.15, 0.07, 0.03], rt_shrink: 0.85}
+    description: mechanism=renewal recursion with a fixed seven-lag serial-interval kernel and an origin-specific reproduction ratio; inputs=per-series target observations released by the forecast origin; fit_scope=reproduction ratio is the median of up to six recent incidence-to-infectiousness ratios clipped to [0.2,3.5] with no optimizer; update=reestimated at each origin and shrunk toward one by factor 0.85 per forecast step; uncertainty=Gaussian marginal proxy combining the forecast mean, a unit floor, and recent-difference variance; limitation=serial interval, clipping bounds, and shrinkage are fixed and no delay or covariate model is fitted
+    repo_url: ""
+    enabled: true
+    priority: 40
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: local_level
+    family: state_space
+    candidate_type: local_level_dlm
+    seed: 0
+    adapter_path: caster.adapters.local.LocalLevelStateSpaceAdapter
+    hyperparams: {alpha: 0.35}
+    description: mechanism=fixed-gain local-level recursion with alpha 0.35 and a horizon-constant mean; inputs=per-series target observations released by the forecast origin; fit_scope=level is filtered separately for each series with no optimized state-space parameters; update=entire released history is refiltered at each origin with mean feedback for recursive horizons; uncertainty=Gaussian marginal proxy from filtering-residual variance multiplied by horizon with a unit floor; limitation=no learned process variance, observation variance, trend, seasonality, or covariates
+    repo_url: ""
+    enabled: true
+    priority: 50
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: covariate_dynamic_linear_trend
+    family: state_space
+    candidate_type: causal_covariate_dynamic_linear_model
+    seed: 0
+    adapter_path: caster.adapters.local.CovariateDynamicLinearTrendDLMAdapter
+    hyperparams: {alpha: 0.35, beta: 0.10, damping: 0.90, covariate_gain: 0.15, covariate_damping: 0.90}
+    description: mechanism=fixed-gain level-and-trend recursion with damped trend extrapolation plus a damped fixed-gain robust-momentum adjustment from auxiliary inputs; inputs=per-series released target history and origin-available emergency-department, wastewater, calendar, lagged and rolling target, and mobility-summary signals when present; fit_scope=alpha 0.35, beta 0.10, trend damping 0.90, covariate damping 0.90, and a task-contract covariate gain of 0.15 or 0.20 are held fixed across series and origins; update=the level-and-trend state and auxiliary signal are recomputed at each origin, and recursive horizons append each predicted mean before the next one-step forecast; uncertainty=Gaussian marginal proxy from floored one-step filtering-residual variance scaled by the evaluated forecast horizon plus a deterministic covariate-adjustment variance term; limitation=all usable auxiliary inputs are reduced to one scalar by median aggregation of clipped robust-momentum summaries
+    repo_url: ""
+    enabled: true
+    priority: 52
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: particle_local_level
+    family: state_space
+    candidate_type: particle_filtered_state_space
+    seed: 0
+    adapter_path: caster.adapters.local.ParticleFilteredLocalLevelAdapter
+    hyperparams: {n_particles: 128, process_scale: 0.2, obs_scale: 1.0}
+    description: mechanism=particle random-walk approximation to a local level with Gaussian observation weighting; inputs=per-series target observations released by the forecast origin; fit_scope=128 particles with fixed process scale 0.2 and observation scale 1.0 are initialized from empirical target variation; update=the complete filter is rerun with a deterministic event seed at each origin and resamples below effective sample size 64; uncertainty=weighted forecast-particle variance plus empirical residual variance with a unit floor; limitation=each observation replaces rather than accumulates particle weights, so this is not a conventional sequential-importance bootstrap filter
+    repo_url: ""
+    enabled: true
+    priority: 52
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: statsforecast_autoarima
+    family: statistical
+    candidate_type: AutoARIMA
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.AutoARIMAReferenceAdapter
+    hyperparams: {}
+    description: mechanism=nonseasonal automatic ARIMA selected by approximate stepwise search; inputs=up to 104 most recent per-series target observations released by the forecast origin; fit_scope=separate fit per series and origin with p and q at most 1, d at most 1, total order at most 2, and at most eight searched models; update=refitted at every origin and at each one-step recursive feedback update; uncertainty=Gaussian marginal proxy from released-history first-difference scale rather than native ARIMA intervals; limitation=restricted nonseasonal search omits higher orders, seasonal terms, and covariates
+    repo_url: ""
+    enabled: true
+    priority: 60
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: statsforecast_autoets
+    family: statistical
+    candidate_type: AutoETS
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.AutoETSReferenceAdapter
+    hyperparams: {}
+    description: mechanism=automatic exponential-smoothing selection over error, trend, and seasonal forms; inputs=per-series target observations released by the forecast origin; fit_scope=separate fit per series and origin with cadence-specific seasonality enabled only when the history supports two cycles; update=refitted at every origin and at each one-step recursive feedback update; uncertainty=Gaussian marginal proxy from released-history first-difference scale rather than native state-space intervals; limitation=short histories force nonseasonal fitting and no covariates are used
+    repo_url: ""
+    enabled: true
+    priority: 61
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: statsforecast_autotheta
+    family: statistical
+    candidate_type: AutoTheta
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.AutoThetaReferenceAdapter
+    hyperparams: {}
+    description: mechanism=automatic Theta forecasting with additive decomposition; inputs=per-series target observations released by the forecast origin; fit_scope=separate fit per series and origin with cadence-specific seasonality enabled only when the history supports two cycles; update=refitted at every origin and at each one-step recursive feedback update; uncertainty=Gaussian marginal proxy from released-history first-difference scale rather than native Theta intervals; limitation=short histories force nonseasonal fitting and no covariates are used
+    repo_url: ""
+    enabled: true
+    priority: 62
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: statsforecast_autoces
+    family: statistical
+    candidate_type: AutoCES
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.AutoCESReferenceAdapter
+    hyperparams: {}
+    description: mechanism=automatic complex exponential-smoothing forecast; inputs=per-series target observations released by the forecast origin; fit_scope=separate fit per series and origin with cadence-specific seasonality enabled only when the history supports two cycles; update=refitted at every origin and at each one-step recursive feedback update; uncertainty=Gaussian marginal proxy from released-history first-difference scale rather than native smoothing intervals; limitation=short histories force nonseasonal fitting and no covariates are used
+    repo_url: ""
+    enabled: true
+    priority: 63
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: prophet
+    family: statistical
+    candidate_type: Prophet
+    seed: 0
+    adapter_path: caster.adapters.statsforecast.ProphetReferenceAdapter
+    hyperparams: {}
+    description: mechanism=piecewise-linear trend with automatic changepoints and additive seasonal terms; inputs=dated per-series target observations released by the forecast origin; fit_scope=separate fit per series and origin with up to 25 changepoints, weekly seasonality for supported daily histories, and other seasonal terms only when enabled by cadence and history; update=refitted at every origin and at each one-step recursive feedback update; uncertainty=Gaussian marginal proxy from released-history first-difference scale with internal uncertainty sampling disabled; limitation=no exogenous regressors are supplied and some cadence-specific seasonal terms are disabled by the declared run configuration
+    repo_url: ""
+    enabled: true
+    priority: 64
+    validation_score: 0.0
+    checkpoint_status: fit_per_series
+
+  - model_id: rnn_simple
+    family: neural
+    candidate_type: RNN
+    seed: 0
+    adapter_path: caster.adapters.neuralforecast.RNNAdapter
+    hyperparams: {alpha: 0.55, gain: 1.0}
+    description: mechanism=fixed scalar log-space exponential recurrence with alpha 0.55 and forecast gain 1.0; inputs=per-series target observations released by the forecast origin; fit_scope=no trained neural weights or optimized parameters; update=hidden state is recomputed from full released history at each origin with one-step point feedback for recursive horizons; uncertainty=Gaussian marginal proxy from variance of one-step recurrence residuals with a unit floor; limitation=single fixed hidden scalar cannot learn multivariate, seasonal, or cross-entity structure
+    repo_url: ""
+    enabled: true
+    priority: 71
+    validation_score: 0.0
+    checkpoint_status: fixed_weights_no_training
+
+  - model_id: lstm_style
+    family: neural
+    candidate_type: LSTM
+    seed: 0
+    adapter_path: caster.adapters.neuralforecast.LSTMReferenceAdapter
+    hyperparams: {}
+    description: mechanism=global encoder-decoder LSTM with two 64-unit encoder layers, one 64-unit decoder, dropout 0.10, robust scaling, and MAE loss; inputs=target-only histories jointly pooled across eligible entities after observation-time and release-time filtering at the origin; fit_scope=separate global fit for each component, forecast strategy, and origin using three optimization steps; update=refitted at every origin with native direct output or iterative one-step mean feedback for recursive horizons; uncertainty=Gaussian marginal proxy from each series released-history first-difference scale; limitation=three optimization steps, no exogenous covariates, and no model-native predictive distribution in the stored forecast
+    repo_url: ""
+    enabled: true
+    priority: 72
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: gru_style
+    family: neural
+    candidate_type: GRU
+    seed: 0
+    adapter_path: caster.adapters.neuralforecast.GRUReferenceAdapter
+    hyperparams: {}
+    description: mechanism=fixed scalar log-space gated recurrence with hand-coded update and reset functions and forecast-state decay 0.95; inputs=per-series target observations released by the forecast origin; fit_scope=no trained neural weights or optimized parameters; update=hidden state is recomputed from full released history at each origin with one-step point feedback for recursive horizons; uncertainty=Gaussian marginal proxy from variance of one-step recurrence residuals with a unit floor; limitation=the fixed scalar equations are not a trained GRU and cannot learn multivariate or cross-entity structure
+    repo_url: ""
+    enabled: true
+    priority: 73
+    validation_score: 0.0
+    checkpoint_status: fixed_weights_no_training
+
+  - model_id: deepar_style
+    family: neural
+    candidate_type: DeepAR
+    seed: 0
+    adapter_path: caster.adapters.neuralforecast.DeepARStyleAdapter
+    hyperparams: {}
+    description: mechanism=global DeepAR with two 40-unit LSTM layers, dropout 0.10, one 40-unit decoder, robust scaling, Normal loss, and 100 training-time trajectory samples; inputs=target-only histories pooled across eligible entities after observation-time and release-time filtering; fit_scope=one three-step fit at the earliest viable scoring origin for each data collection, component, and forecast strategy; update=fitted weights remain fixed while each later origin supplies its released truncated history with mean feedback for recursive horizons; uncertainty=stored intervals use a Gaussian marginal proxy from released-history first-difference scale; limitation=native trajectory uncertainty is not stored and weights do not adapt after the initial fit
+    repo_url: ""
+    enabled: true
+    priority: 74
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: nbeats_basis
+    family: neural
+    candidate_type: NBEATS
+    seed: 0
+    adapter_path: caster.adapters.neuralforecast.NBEATSReferenceAdapter
+    hyperparams: {}
+    description: mechanism=global N-BEATS using six identity blocks for one-step recursion or two identity, two trend, and two seasonality blocks for longer direct forecasts; inputs=target-only histories pooled across eligible entities after observation-time and release-time filtering; fit_scope=one robust-scaled MAE fit with three optimization steps at the earliest viable scoring origin for each data collection, component, and forecast strategy; update=fitted weights remain fixed while each later origin supplies its released truncated history with mean feedback for recursive horizons; uncertainty=Gaussian marginal proxy from released-history first-difference scale; limitation=stored uncertainty is not model-native and weights do not adapt after the initial fit
+    repo_url: ""
+    enabled: true
+    priority: 75
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: nhits_hinterp
+    family: neural
+    candidate_type: NHITS
+    seed: 0
+    adapter_path: caster.adapters.neuralforecast.NHITSReferenceAdapter
+    hyperparams: {}
+    description: mechanism=global N-HiTS with three one-block identity stacks, pooling kernels 2,2,1, frequency downsampling 4,2,1, robust scaling, and MAE loss; inputs=target-only histories pooled across eligible entities after observation-time and release-time filtering; fit_scope=one three-step fit at the earliest viable scoring origin for each data collection, component, and forecast strategy; update=fitted weights remain fixed while each later origin supplies its released truncated history with mean feedback for recursive horizons; uncertainty=Gaussian marginal proxy from released-history first-difference scale; limitation=stored uncertainty is not model-native and weights do not adapt after the initial fit
+    repo_url: ""
+    enabled: true
+    priority: 76
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: patchtst_patched
+    family: neural
+    candidate_type: PatchTST
+    seed: 0
+    adapter_path: caster.adapters.neuralforecast.PatchTSTReferenceAdapter
+    hyperparams: {}
+    description: mechanism=global PatchTST with three encoder layers, four attention heads, hidden size 64, adaptive patch length up to 16, robust scaling, and MAE loss; inputs=target-only histories pooled across eligible entities after observation-time and release-time filtering; fit_scope=one three-step fit at the earliest viable scoring origin for each data collection, component, and forecast strategy; update=fitted weights remain fixed while each later origin supplies its released truncated history with mean feedback for recursive horizons; uncertainty=Gaussian marginal proxy from released-history first-difference scale; limitation=stored uncertainty is not model-native, no exogenous covariates are used, and weights do not adapt after the initial fit
+    repo_url: ""
+    enabled: true
+    priority: 77
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: tft_gated
+    family: neural
+    candidate_type: TFT
+    seed: 0
+    adapter_path: caster.adapters.neuralforecast.TFTReferenceAdapter
+    hyperparams: {}
+    description: mechanism=global Temporal Fusion Transformer with two recurrent layers, four attention heads, hidden size 64, dropout 0.10, robust scaling, and MAE loss; inputs=target-only histories pooled across eligible entities after observation-time and release-time filtering with no exogenous variables; fit_scope=one three-step fit at the earliest viable scoring origin for each data collection, component, and forecast strategy; update=fitted weights remain fixed while each later origin supplies its released truncated history with mean feedback for recursive horizons; uncertainty=Gaussian marginal proxy from released-history first-difference scale; limitation=stored uncertainty is not model-native and weights do not adapt after the initial fit
+    repo_url: ""
+    enabled: true
+    priority: 78
+    validation_score: 0.0
+    checkpoint_status: fit_per_dataset
+
+  - model_id: chronos_external
+    family: foundation_ts
+    candidate_type: Chronos
+    seed: 0
+    adapter_path: caster.models.foundation_adapters.ChronosForecastAdapter
+    hyperparams: {forecast_path: artifacts/external_forecasts/chronos_forecasts.csv}
+    description: mechanism=pretrained Chronos-Bolt quantile forecasting with the returned q50 median as point forecast; inputs=per-series target observations released by the forecast origin; fit_scope=fixed pretrained checkpoint with no task-specific fitting; update=native multi-horizon output is used directly or one-step q50 point forecasts are fed back recursively; uncertainty=native q25 and q75 define the central 50 interval and q10-to-q90 dispersion is rescaled with declared Normal quantiles to form a central 90 Gaussian-equivalent proxy centered on q50; limitation=q05 and q95 are not native checkpoint outputs and no joint forecast trajectory is represented
+    repo_url: ""
+    enabled: true
+    priority: 90
+    validation_score: 0.0
+    checkpoint_status: external_forecast_csv_or_checkpoint
+
+  - model_id: timesfm_external
+    family: foundation_ts
+    candidate_type: TimesFM
+    seed: 0
+    adapter_path: caster.models.foundation_adapters.TimesFMForecastAdapter
+    hyperparams: {forecast_path: artifacts/external_forecasts/timesfm_forecasts.csv}
+    description: mechanism=pretrained TimesFM decoder point forecasting; inputs=per-series target observations released by the forecast origin with a maximum context length of 512; fit_scope=fixed pretrained checkpoint with no task-specific fitting; update=native multi-horizon output is used directly or one-step point forecasts are fed back recursively; uncertainty=Gaussian central 50 and 90 marginal proxies from released-history empirical residual scale; limitation=intervals are not native checkpoint quantiles and no joint forecast trajectory is represented
+    repo_url: ""
+    enabled: true
+    priority: 91
+    validation_score: 0.0
+    checkpoint_status: external_forecast_csv_or_checkpoint

@@ -1,0 +1,93 @@
+source_snapshot: "2026-04-08"
+
+contracts:
+  nhsn_finalized:
+    source_family: nhsn
+    role: core_target
+    snapshot_date: "2026-04-08"
+    raw_path: data_raw/nhsn/2026-04-08/raw_finalized.csv
+    metadata_row_count: 19765
+    canonical_use: gold target
+    universe_rule: filter later to 50 states + DC
+    must_exclude_from_canonical_universe:
+      - USA
+      - Region 1
+      - Region 2
+      - Region 3
+      - Region 4
+      - Region 5
+      - Region 6
+      - Region 7
+      - Region 8
+      - Region 9
+      - Region 10
+      - AS
+      - GU
+      - MP
+      - PR
+      - VI
+    notes: NHSN finalized is the only v0-core gold target source.
+
+  nhsn_preliminary:
+    source_family: nhsn
+    role: diagnostic_only
+    snapshot_date: "2026-04-08"
+    raw_path: data_raw/nhsn/2026-04-08/raw_preliminary.csv
+    metadata_row_count: 19832
+    canonical_use: preliminary-to-finalized revision diagnostic markers only
+    v0_core: false
+    notes: NHSN preliminary is not part of v0-core and never enters forecast covariates or posterior evidence.
+
+  nssp_ed_respiratory:
+    source_family: nssp
+    role: core_covariate
+    snapshot_date: "2026-04-08"
+    raw_path: data_raw/nssp/2026-04-08/raw.csv
+    metadata_row_count: 11712
+    geography_scope: national_only
+    broadcast_rule: national_broadcast
+    fabricated_state_level_allowed: false
+    notes: Current NSSP snapshot has only United States geography; do not fabricate state-level NSSP.
+
+  nwss_flua:
+    source_family: nwss
+    role: core_covariate
+    snapshot_date: "2026-04-08"
+    raw_path: data_raw/nwss/2026-04-08/raw_flua.csv
+    metadata_row_count: 12829
+    geography_scope: state_or_territory_raw
+    period_rule: All Results only
+    known_caveat: Includes Guam and is missing North Dakota; later canonical grid must preserve North Dakota with missing mask.
+    notes: Influenza A wastewater WVAL enters v0-core only as a later state-week covariate.
+
+  nwss_rsv:
+    source_family: nwss
+    role: core_covariate
+    snapshot_date: "2026-04-08"
+    raw_path: data_raw/nwss/2026-04-08/raw_rsv.csv
+    metadata_row_count: 12739
+    geography_scope: state_or_territory_raw
+    period_rule: All Results only
+    known_caveat: Includes Guam and is missing North Dakota; later canonical grid must preserve North Dakota with missing mask.
+    notes: RSV wastewater WVAL is retained in the broad panel but is not matched to the formal COVID/FLU forecast components.
+
+  variants:
+    source_family: variants
+    role: auxiliary_only
+    snapshot_date: "2026-04-08"
+    raw_path: data_raw/variants/2026-04-08/raw.csv
+    metadata_row_count: 4421502
+    geography_scope: USA_and_HHS_region_raw
+    formal_diagnostic_filter: USA_only_smoothed_biweekly
+    state_level_mapping_allowed: false
+    v0_core_join_allowed: false
+    notes: Formal variant-turnover markers use USA-level rows only; variants must not be mapped to states or joined into the v0-core forecast panel or posterior evidence.
+
+  nwss_sars_cov_2_state_trend:
+    source_family: nwss
+    role: excluded_from_v0_core
+    snapshot_date: "2026-04-08"
+    raw_path: data_raw/nwss/2026-04-08/raw.csv
+    metadata_row_count: 837382
+    date_caveat: Ends at 2025-09-07 and includes non-state reporting jurisdictions.
+    notes: SARS-CoV-2 wastewater state-trend is excluded from v0-core.

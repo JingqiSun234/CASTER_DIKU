@@ -1,0 +1,27 @@
+stages:
+  - stage: A1_top1_shared_bridge
+    method_id: top1_shared_bridge
+  - stage: A2_topk_static_bridge
+    method_id: topk_static_bridge
+  - stage: A3_offline_one_layer_caster
+    method_id: offline_one_layer_caster
+  - stage: A4_one_layer_caster_without_selected_rho
+    method_id: one_layer_caster_without_selected_rho
+  - stage: A5_causal_selected_rho
+    method_id: causal_selected_rho
+tasks:
+  - task: benchmark_a
+    ledger: __RUN_ROOT__/new_method/artifacts/benchmark_a/event_ledger.csv
+    artifact_root: __RUN_ROOT__/new_method/artifacts/benchmark_a
+    full_bridge_config: __RUN_ROOT__/new_method/artifacts/benchmark_a/bridge_config.json
+    full_bridge_config_one_layer: __RUN_ROOT__/new_method/artifacts/benchmark_a/bridge_config.one_layer.json
+  - task: benchmark_b_covid
+    ledger: __RUN_ROOT__/new_method/artifacts/benchmark_b/benchmark_b_covid/event_ledger.csv
+    artifact_root: __RUN_ROOT__/new_method/artifacts/benchmark_b/benchmark_b_covid
+    full_bridge_config: __RUN_ROOT__/new_method/artifacts/benchmark_b/benchmark_b_covid/bridge_config.json
+    full_bridge_config_one_layer: __RUN_ROOT__/new_method/artifacts/benchmark_b/benchmark_b_covid/bridge_config.one_layer.json
+  - task: benchmark_b_flu
+    ledger: __RUN_ROOT__/new_method/artifacts/benchmark_b/benchmark_b_flu/event_ledger.csv
+    artifact_root: __RUN_ROOT__/new_method/artifacts/benchmark_b/benchmark_b_flu
+    full_bridge_config: __RUN_ROOT__/new_method/artifacts/benchmark_b/benchmark_b_flu/bridge_config.json
+    full_bridge_config_one_layer: __RUN_ROOT__/new_method/artifacts/benchmark_b/benchmark_b_flu/bridge_config.one_layer.json

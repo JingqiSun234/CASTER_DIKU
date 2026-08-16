@@ -1,0 +1,129 @@
+benchmark_name: CDC-RespForecast
+internal_name: benchmark_b_cdc_respforecast
+version: v0-core
+task_family: forecasting_only
+time_grain: weekly
+source_snapshot: "2026-04-08"
+
+canonical_window:
+  start_week_end: "2022-10-01"
+  end_week_end: "2026-03-28"
+  week_count: 183
+
+jurisdiction_universe:
+  name: 50_states_plus_dc
+  count: 51
+  reference_file: reference/jurisdiction_map.csv
+  excludes:
+    - USA
+    - Region 1
+    - Region 2
+    - Region 3
+    - Region 4
+    - Region 5
+    - Region 6
+    - Region 7
+    - Region 8
+    - Region 9
+    - Region 10
+    - AS
+    - GU
+    - MP
+    - PR
+    - VI
+
+targets:
+  primary:
+    - name: covid_adm_per100k
+      source_column: totalconfc19newadmper100k
+      source: nhsn_finalized
+      value_type: per100k
+      pathogen: covid19
+      v0_core: true
+    - name: flu_adm_per100k
+      source_column: totalconfflunewadmper100k
+      source: nhsn_finalized
+      value_type: per100k
+      pathogen: influenza
+      v0_core: true
+  auxiliary_retained:
+    - name: covid_adm_count
+      source_column: totalconfc19newadm
+      source: nhsn_finalized
+      value_type: count
+      pathogen: covid19
+      v0_core: false
+      retained_in_panel: true
+    - name: flu_adm_count
+      source_column: totalconfflunewadm
+      source: nhsn_finalized
+      value_type: count
+      pathogen: influenza
+      v0_core: false
+      retained_in_panel: true
+  extension_only:
+    - name: rsv_adm_count
+      source_column: totalconfrsvnewadm
+      source: nhsn_finalized
+      value_type: count
+      pathogen: rsv
+      v0_core: false
+      extension: rsv
+    - name: rsv_adm_per100k
+      source_column: totalconfrsvnewadmper100k
+      source: nhsn_finalized
+      value_type: per100k
+      pathogen: rsv
+      v0_core: false
+      extension: rsv
+  raw_to_standard:
+    totalconfc19newadm: covid_adm_count
+    totalconfc19newadmper100k: covid_adm_per100k
+    totalconfflunewadm: flu_adm_count
+    totalconfflunewadmper100k: flu_adm_per100k
+    totalconfrsvnewadm: rsv_adm_count
+    totalconfrsvnewadmper100k: rsv_adm_per100k
+
+covariate_groups:
+  nssp_national:
+    source: nssp_ed_respiratory
+    role: core_covariate
+    geography_scope: national_only
+    broadcast: national_only
+  nwss_flua:
+    source: nwss_flua
+    role: core_covariate
+    geography_scope: state_week
+    period_rule: All Results only
+  nwss_rsv:
+    source: nwss_rsv
+    role: core_covariate
+    geography_scope: state_week
+    period_rule: All Results only
+
+tasks:
+  direct_forecasting:
+    horizons: [1, 2]
+  rollout_forecasting:
+    horizons: [4]
+
+primary_metrics:
+  - RMSE
+  - MAE
+
+non_goals:
+  - variants_join
+  - sars2_wastewater_join
+  - preliminary_vs_finalized
+  - nowcasting
+
+expected_counts:
+  canonical_jurisdictions: 51
+  canonical_weeks: 183
+  canonical_grid_rows: 9333
+  nssp_weekly_rows: 183
+  nssp_feature_count: 64
+  panel_targets_wide_rows: 9333
+  panel_targets_long_rows: 37332
+  samples_direct_rows: 35092
+  samples_rollout_h4_rows: 17276

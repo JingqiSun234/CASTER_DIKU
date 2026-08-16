@@ -1,0 +1,11 @@
+{
+  "source": "nhsn",
+  "dataset_id": "mpgq-jmmr",
+  "label": "CDC Hospital Respiratory Data (HRD) \u2014 Preliminary",
+  "url": "https://data.cdc.gov/resource/mpgq-jmmr.csv",
+  "fetched_at": "2026-04-08T19:30:23+00:00",
+  "sha256": "cd1f48784e17956cd018e218c86ccbce99d583cc1563f38d5f6f12064cd2f14b",
+  "row_count": 19832,
+  "run_date": "2026-04-08",
+  "notes": "Socrata paginated CSV export; 1 page(s); page_size=50000. Preliminary (unrevised) weekly hospital admissions. In the formal CASTER benchmark this source is used only to derive revision-diagnostic markers and never enters forecast covariates or posterior evidence."
+}

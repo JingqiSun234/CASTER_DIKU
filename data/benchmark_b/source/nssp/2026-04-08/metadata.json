@@ -1,0 +1,11 @@
+{
+  "source": "nssp",
+  "dataset_id": "7xva-uux8",
+  "label": "CDC NSSP Emergency Department Respiratory Visits",
+  "url": "https://data.cdc.gov/resource/7xva-uux8.csv",
+  "fetched_at": "2026-04-08T19:30:26+00:00",
+  "sha256": "10e6964e79ed079fb190c71cfcb2c31420c8a5c339dbe5191bd4b90cdb639f4c",
+  "row_count": 11712,
+  "run_date": "2026-04-08",
+  "notes": "Socrata paginated CSV export; 1 page(s); page_size=50000. This archived table contains United States national ED-visit percentages; the formal benchmark broadcasts the national weekly values across jurisdiction rows and does not fabricate state-level NSSP observations."
+}

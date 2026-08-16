@@ -1,0 +1,6 @@
+schema: caster_external_assets_v1
+qwen_checkpoint: /path/to/Qwen2.5-7B-Instruct
+chronos_checkpoint: /path/to/amazon-chronos-bolt-small
+timesfm_checkpoint: /path/to/google-timesfm-2.0-500m-pytorch
+huggingface_cache: /path/to/read-only-huggingface-cache
+cuda_devices: [0, 1, 2, 3]

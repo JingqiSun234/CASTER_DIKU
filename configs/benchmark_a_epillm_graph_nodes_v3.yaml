@@ -1,0 +1,33 @@
+schema_version: 1
+protocol_version: benchmark_protocol_v3_direct_rollout
+
+benchmark_a:
+  authority_dataset_root: data/benchmark_a/raw_all
+  raw_dataset_root: data/benchmark_a/raw_all
+  source_panel: data/benchmark_a/curated_v26_1_official/source_daily_panel.csv
+  output_dir: data/benchmark_a/curated_full_v3_direct_rollout7
+  entity_policy: sorted_union_of_first_epillm_daily_graph_endpoints
+  expected_entity_counts: {England: 129, France: 81, Italy: 105, Spain: 34}
+  expected_entity_source_set_sha256: 35fd1f2b89be91f1c1ff67ab1f8559cfb55bc71fdd4d8a7aa94b2c3dd5437349
+  country_periods:
+    England: {start: '2020-03-13', end: '2020-05-12'}
+    France: {start: '2020-03-10', end: '2020-05-12'}
+    Italy: {start: '2020-02-24', end: '2020-05-12'}
+    Spain: {start: '2020-03-12', end: '2020-05-12'}
+  mobility:
+    graph_root: data/benchmark_a/raw_all
+    required_entity_coverage: 1.0
+    release_policy: graph_date_same_day_benchmark_abstraction
+  preserved_contract:
+    direct_1d3d7d: [1, 3, 7]
+    rollout_7d: [1, 2, 3, 4, 5, 6, 7]
+    split_basis: forecast_origin
+    train_end: '2020-04-09'
+    validation_start: '2020-04-10'
+    validation_end: '2020-04-23'
+    embargo_start: '2020-04-24'
+    embargo_end: '2020-04-30'
+    test_start: '2020-05-01'
+    test_end: '2020-05-05'
+    release_policy: target_time_immediate_daily_benchmark_label
+    no_learning_algorithm_changed: false

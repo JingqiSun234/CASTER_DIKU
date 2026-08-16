@@ -1,0 +1,12 @@
+statsforecast==2.0.3
+prophet==1.3.0
+cmdstanpy>=1.0.4
+coreforecast>=0.0.17
+utilsforecast>=0.1.4
+scipy>=1.7.3
+statsmodels>=0.14.5
+tqdm>=4.63.2
+fugue>=0.9.4
+threadpoolctl>=3
+holidays>=0.25,<1
+matplotlib>=3.5.3

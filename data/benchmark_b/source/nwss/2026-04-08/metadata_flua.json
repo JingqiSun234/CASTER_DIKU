@@ -1,0 +1,11 @@
+{
+  "source": "nwss",
+  "dataset_id": "nwssfluastateactivitylevelDL",
+  "label": "CDC NWSS Influenza A Wastewater - State Activity Levels",
+  "url": "https://www.cdc.gov/wcms/vizdata/NCEZID_DIDRI/FluA/nwssfluastateactivitylevelDL.csv",
+  "fetched_at": "2026-04-08T19:31:19+00:00",
+  "sha256": "daf78648eee7845b6f41054ac8ab71d71a11a71b8a97591f6bbcbf3fa2820705",
+  "row_count": 12829,
+  "run_date": "2026-04-08",
+  "notes": "Direct CSV export from the CDC NWSS influenza A state-trend page. Contains state/territory wastewater viral activity levels (WVAL). No public issue-date history; the formal v26.1 benchmark assigns the conservative 28-day lag recorded in configs/benchmark_b_context_v26_1.yaml."
+}

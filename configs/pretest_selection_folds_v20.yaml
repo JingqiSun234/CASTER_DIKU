@@ -1,0 +1,31 @@
+version: 20
+policy: one_validation_forecast_origin_per_fold_equal_weight
+tasks:
+  benchmark_a:
+    source_split: val
+    first_origin: '2020-04-10'
+    last_origin: '2020-04-23'
+    expected_folds: 14
+    t_sel: '2020-04-30'
+    first_test_origin: '2020-05-01'
+  benchmark_b_pooled:
+    source_split: val
+    first_origin: '2025-03-15'
+    last_origin: '2025-07-19'
+    expected_folds: 19
+    t_sel: '2025-08-23'
+    first_test_origin: '2025-09-20'
+  benchmark_b_covid:
+    source_split: val
+    first_origin: '2025-03-15'
+    last_origin: '2025-07-19'
+    expected_folds: 19
+    t_sel: '2025-08-23'
+    first_test_origin: '2025-09-20'
+  benchmark_b_flu:
+    source_split: val
+    first_origin: '2025-03-15'
+    last_origin: '2025-07-19'
+    expected_folds: 19
+    t_sel: '2025-08-23'
+    first_test_origin: '2025-09-20'

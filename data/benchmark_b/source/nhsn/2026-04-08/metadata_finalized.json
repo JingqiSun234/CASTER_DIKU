@@ -1,0 +1,11 @@
+{
+  "source": "nhsn",
+  "dataset_id": "ua7e-t2fy",
+  "label": "CDC Hospital Respiratory Data (HRD) \u2014 Finalized",
+  "url": "https://data.cdc.gov/resource/ua7e-t2fy.csv",
+  "fetched_at": "2026-04-08T19:30:01+00:00",
+  "sha256": "1d601e439a273ba042079e1e74c1e2cb2147b9aa5f00f03a6c70e2c8f47ab2bf",
+  "row_count": 19765,
+  "run_date": "2026-04-08",
+  "notes": "Socrata paginated CSV export; 1 page(s); page_size=50000. Contains finalized (revised) weekly hospital admissions by state."
+}

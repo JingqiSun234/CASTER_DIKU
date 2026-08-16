@@ -1,0 +1,52 @@
+jurisdiction,abbr,fips,hhs_region
+Alabama,AL,01,4
+Alaska,AK,02,10
+Arizona,AZ,04,9
+Arkansas,AR,05,6
+California,CA,06,9
+Colorado,CO,08,8
+Connecticut,CT,09,1
+Delaware,DE,10,3
+District of Columbia,DC,11,3
+Florida,FL,12,4
+Georgia,GA,13,4
+Hawaii,HI,15,9
+Idaho,ID,16,10
+Illinois,IL,17,5
+Indiana,IN,18,5
+Iowa,IA,19,7
+Kansas,KS,20,7
+Kentucky,KY,21,4
+Louisiana,LA,22,6
+Maine,ME,23,1
+Maryland,MD,24,3
+Massachusetts,MA,25,1
+Michigan,MI,26,5
+Minnesota,MN,27,5
+Mississippi,MS,28,4
+Missouri,MO,29,7
+Montana,MT,30,8
+Nebraska,NE,31,7
+Nevada,NV,32,9
+New Hampshire,NH,33,1
+New Jersey,NJ,34,2
+New Mexico,NM,35,6
+New York,NY,36,2
+North Carolina,NC,37,4
+North Dakota,ND,38,8
+Ohio,OH,39,5
+Oklahoma,OK,40,6
+Oregon,OR,41,10
+Pennsylvania,PA,42,3
+Rhode Island,RI,44,1
+South Carolina,SC,45,4
+South Dakota,SD,46,8
+Tennessee,TN,47,4
+Texas,TX,48,6
+Utah,UT,49,8
+Vermont,VT,50,1
+Virginia,VA,51,3
+Washington,WA,53,10
+West Virginia,WV,54,3
+Wisconsin,WI,55,5
+Wyoming,WY,56,8

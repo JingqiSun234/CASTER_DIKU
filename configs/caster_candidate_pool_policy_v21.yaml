@@ -1,0 +1,50 @@
+schema: caster_candidate_pool_policy_v21
+profile: formal_27_country_macro_v1
+scope: all_tasks
+status: released_formal
+formal_preregistration_claimed: false
+test_metrics_used_for_rescoring: false
+formal_agent_pool_applies: true
+full_candidate_archive_retained_for_validation: false
+
+task_policies:
+  benchmark_a:
+    forecast_entity_unit: graph_node
+    reporting_macro_unit: country
+    validation_split: val
+    validation_aggregation: equal_country_then_equal_horizon_then_equal_strategy_then_equal_component_then_equal_fold_mse_single_sqrt
+    normalization_population: formal_candidates
+    candidate_bank_size: 27
+    eligible_candidate_count: 27
+    top_k: 10
+    excluded_from_caster_pool: []
+  benchmark_b_pooled:
+    forecast_entity_unit: jurisdiction
+    reporting_macro_unit: entity
+    validation_split: val
+    validation_aggregation: equal_entity_then_equal_horizon_then_equal_strategy_then_equal_component_then_equal_fold_mse_single_sqrt
+    normalization_population: formal_candidates
+    candidate_bank_size: 27
+    eligible_candidate_count: 27
+    top_k: 10
+    excluded_from_caster_pool: []
+  benchmark_b_covid:
+    forecast_entity_unit: jurisdiction
+    reporting_macro_unit: entity
+    validation_split: val
+    validation_aggregation: equal_entity_then_equal_horizon_then_equal_strategy_then_equal_component_then_equal_fold_mse_single_sqrt
+    normalization_population: formal_candidates
+    candidate_bank_size: 27
+    eligible_candidate_count: 27
+    top_k: 10
+    excluded_from_caster_pool: []
+  benchmark_b_flu:
+    forecast_entity_unit: jurisdiction
+    reporting_macro_unit: entity
+    validation_split: val
+    validation_aggregation: equal_entity_then_equal_horizon_then_equal_strategy_then_equal_component_then_equal_fold_mse_single_sqrt
+    normalization_population: formal_candidates
+    candidate_bank_size: 27
+    eligible_candidate_count: 27
+    top_k: 10
+    excluded_from_caster_pool: []

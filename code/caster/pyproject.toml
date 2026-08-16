@@ -1,0 +1,17 @@
+[project]
+name = "caster-algorithm-impl"
+version = "0.1.0"
+description = "Archive-backed CASTER forecasting and Bayesian aggregation implementation"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "pyyaml",
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
