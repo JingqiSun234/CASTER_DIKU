@@ -5,6 +5,8 @@ from math import lgamma, log, pi, sqrt
 import numpy as np
 import pandas as pd
 
+from caster.forecast.archive import validate_native_horizon_provenance
+
 
 alternate_ARCHIVE_MOMENT = "alternate_archive_moment"
 COHERENT_MEAN_PRESERVING_TRUNCATED_T = (
@@ -1738,6 +1740,20 @@ def score_archive_rows(ledger_rows: pd.DataFrame, archive: pd.DataFrame, config:
     required_ledger = {"forecast_id", "observed_value", "observed_mask"}; required_archive = {"forecast_id", "model_id", "particle_id", "pred_mean", "pred_var", "component", "horizon"}
     if missing := sorted(required_ledger - set(ledger_rows.columns)): raise ValueError(f"ledger missing columns {missing}")
     if missing := sorted(required_archive - set(archive.columns)): raise ValueError(f"archive missing columns {missing}")
+    # Callers may score one split (for example, test) against an archive that
+    # contains train/validation/embargo rows as well.  Native-horizon
+    # provenance is a contract for the rows being scored; unrelated archive
+    # rows must not be treated as missing from the supplied ledger subset.
+    scoring_ids = set(ledger_rows["forecast_id"].astype(str))
+    archive_for_scoring = archive.loc[
+        archive["forecast_id"].astype(str).isin(scoring_ids)
+    ].copy()
+    native_violations = validate_native_horizon_provenance(
+        archive_for_scoring, ledger_rows
+    )
+    if not native_violations.empty:
+        summary = native_violations.head(10).to_dict("records")
+        raise ValueError(f"invalid native-horizon provenance: {summary}")
     meta_cols = ["forecast_id", "observed_value", "observed_mask", "mode", "component", "horizon", "forecast_origin", "target_time", "features_available_until"]
     ledger_meta = ledger_rows[[c for c in meta_cols if c in ledger_rows.columns]].drop_duplicates("forecast_id").copy()
     rows = archive.merge(ledger_meta, on="forecast_id", how="inner", suffixes=("_archive", "_ledger")).copy()

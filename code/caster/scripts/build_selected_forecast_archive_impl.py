@@ -268,6 +268,181 @@ def _with_forecast_provenance(archive: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+NATIVE_HORIZON_PROVENANCE_COLUMNS = (
+    "last_released_target_time",
+    "native_horizon_steps",
+    "forecasted_native_target_time",
+)
+
+
+def _build_native_horizon_provenance(
+    ledger: pd.DataFrame,
+    panel: pd.DataFrame,
+) -> dict[str, dict[str, object]]:
+    panel_norm = _normalise_panel(panel)
+    series_index = _build_series_index(panel_norm)
+    e_col = _entity_col(ledger)
+    work = ledger[
+        [e_col, "component", "forecast_origin", "target_time", "horizon", "forecast_id"]
+    ].copy()
+    work["forecast_id"] = work["forecast_id"].astype(str)
+    if work["forecast_id"].duplicated().any():
+        duplicate_ids = work.loc[
+            work["forecast_id"].duplicated(), "forecast_id"
+        ].head(10).tolist()
+        raise ValueError(f"duplicate ledger forecast_id values: {duplicate_ids}")
+    work["__entity__"] = work[e_col].astype(str)
+    work["component"] = work["component"].astype(str)
+    work["__origin__"] = pd.to_datetime(
+        work["forecast_origin"], errors="coerce", utc=True
+    ).dt.tz_convert(None)
+    work["__target__"] = pd.to_datetime(
+        work["target_time"], errors="coerce", utc=True
+    ).dt.tz_convert(None)
+    work["__horizon__"] = pd.to_numeric(work["horizon"], errors="coerce")
+    if (
+        work[["__origin__", "__target__", "__horizon__"]].isna().any().any()
+        or work["__horizon__"].lt(1).any()
+        or work["__horizon__"].ne(np.floor(work["__horizon__"])).any()
+    ):
+        raise ValueError("ledger has invalid origin, target, or nominal horizon")
+    work["__horizon__"] = work["__horizon__"].astype(np.int64)
+
+    group_keys = work[["__entity__", "component", "__origin__"]].drop_duplicates()
+    last_released_by_key: dict[tuple[str, str, pd.Timestamp], pd.Timestamp] = {}
+    for entity, component, origin in group_keys.itertuples(index=False, name=None):
+        times, releases, _ = series_index.get(
+            (str(entity), str(component)),
+            (
+                np.asarray([], dtype="datetime64[ns]"),
+                np.asarray([], dtype="datetime64[ns]"),
+                np.asarray([], dtype=float),
+            ),
+        )
+        cutoff = np.datetime64(pd.Timestamp(origin).to_datetime64())
+        visible = (times <= cutoff) & (releases <= cutoff)
+        if not visible.any():
+            raise ValueError(
+                "cannot establish native horizon without a finite released target: "
+                f"entity={entity} component={component} origin={origin}"
+            )
+        last_released_by_key[(str(entity), str(component), pd.Timestamp(origin))] = (
+            pd.Timestamp(pd.to_datetime(times[visible].max()))
+        )
+
+    work["__last_released__"] = [
+        last_released_by_key[(entity, component, pd.Timestamp(origin))]
+        for entity, component, origin in work[
+            ["__entity__", "component", "__origin__"]
+        ].itertuples(index=False, name=None)
+    ]
+    nominal_delta_ns = (
+        work["__target__"] - work["__origin__"]
+    ).astype("timedelta64[ns]").astype(np.int64)
+    cadence_ns = nominal_delta_ns // work["__horizon__"].to_numpy(dtype=np.int64)
+    invalid_cadence = (
+        (nominal_delta_ns <= 0)
+        | (cadence_ns <= 0)
+        | (nominal_delta_ns % work["__horizon__"].to_numpy(dtype=np.int64) != 0)
+    )
+    if invalid_cadence.any():
+        bad_ids = work.loc[invalid_cadence, "forecast_id"].head(10).tolist()
+        raise ValueError(
+            "ledger target is not on its declared nominal cadence; "
+            f"forecast_id={bad_ids}"
+        )
+    native_delta_ns = (
+        work["__target__"] - work["__last_released__"]
+    ).astype("timedelta64[ns]").astype(np.int64)
+    native_steps = native_delta_ns // cadence_ns
+    invalid_native = (
+        (native_delta_ns <= 0)
+        | (native_steps < 1)
+        | (native_delta_ns % cadence_ns != 0)
+    )
+    if invalid_native.any():
+        bad_ids = work.loc[invalid_native, "forecast_id"].head(10).tolist()
+        raise ValueError(
+            "ledger target is not on the release-gated native cadence; "
+            f"forecast_id={bad_ids}"
+        )
+    forecasted_target = pd.to_datetime(
+        work["__last_released__"].astype("int64") + native_steps * cadence_ns
+    )
+    if not forecasted_target.eq(work["__target__"]).all():
+        bad_ids = work.loc[
+            ~forecasted_target.eq(work["__target__"]), "forecast_id"
+        ].head(10).tolist()
+        raise AssertionError(
+            "forecasted native target does not equal ledger target; "
+            f"forecast_id={bad_ids}"
+        )
+
+    return {
+        forecast_id: {
+            "last_released_target_time": pd.Timestamp(last_released),
+            "native_horizon_steps": int(native_step),
+            "forecasted_native_target_time": pd.Timestamp(target),
+        }
+        for forecast_id, last_released, native_step, target in zip(
+            work["forecast_id"],
+            work["__last_released__"],
+            native_steps,
+            forecasted_target,
+        )
+    }
+
+
+def _attach_native_horizon_provenance(
+    archive: pd.DataFrame,
+    ledger: pd.DataFrame,
+    panel: pd.DataFrame,
+    *,
+    provenance_by_id: dict[str, dict[str, object]] | None = None,
+) -> pd.DataFrame:
+    """Attach and verify the native target span for every model archive row.
+
+    This is intentionally applied after every forecast source (local adapters,
+    shared baselines, foundation models, and the grouped LSTM path) has been
+    converted to the common archive.  Consequently the final concat cannot
+    silently turn these fields into model-specific missing values.
+    """
+
+    if provenance_by_id is None:
+        provenance_by_id = _build_native_horizon_provenance(ledger, panel)
+
+    out = archive.copy()
+    forecast_ids = out["forecast_id"].astype(str)
+    unknown = sorted(set(forecast_ids) - set(provenance_by_id))
+    if unknown:
+        raise ValueError(
+            "archive contains forecast ids outside the native-horizon ledger: "
+            f"{unknown[:10]}"
+        )
+    for column in NATIVE_HORIZON_PROVENANCE_COLUMNS:
+        expected = forecast_ids.map(
+            lambda forecast_id: provenance_by_id[forecast_id][column]
+        )
+        if column in out.columns:
+            actual = out[column]
+            populated = actual.notna() & actual.astype(str).str.strip().ne("")
+            if column == "native_horizon_steps":
+                actual_cmp = pd.to_numeric(actual, errors="coerce")
+                expected_cmp = pd.to_numeric(expected, errors="raise")
+            else:
+                actual_cmp = pd.to_datetime(actual, errors="coerce", utc=True)
+                expected_cmp = pd.to_datetime(expected, errors="raise", utc=True)
+            mismatch = populated & actual_cmp.ne(expected_cmp)
+            if mismatch.any():
+                bad_ids = forecast_ids[mismatch].head(10).tolist()
+                raise ValueError(
+                    f"archive {column} conflicts with release-gated target history; "
+                    f"forecast_id={bad_ids}"
+                )
+        out[column] = expected.to_numpy()
+    return out
+
+
 def baseline_reuse_models() -> list[str]:
     return sorted(BASELINE_REUSE_PATHS)
 
@@ -379,6 +554,12 @@ def _baseline_forecast_to_archive(
     source["_unsafe_native_proxy_executed"] = _boolish_source_column(
         source, "unsafe_native_proxy_executed"
     )
+    for column in NATIVE_HORIZON_PROVENANCE_COLUMNS:
+        source[f"_source_{column}"] = (
+            source[column]
+            if column in source.columns
+            else pd.Series(pd.NA, index=source.index)
+        )
     if model_id in FOUNDATION_REUSE_MODELS:
         provenance_columns = {"generated_at", "features_available_until"}
         missing_provenance = sorted(provenance_columns - set(source.columns))
@@ -410,6 +591,10 @@ def _baseline_forecast_to_archive(
                 "_unsafe_native_proxy_executed",
                 "_generated_at",
                 "_features_available_until",
+                *[
+                    f"_source_{column}"
+                    for column in NATIVE_HORIZON_PROVENANCE_COLUMNS
+                ],
             ]
         ],
         on="forecast_id",
@@ -464,6 +649,10 @@ def _baseline_forecast_to_archive(
         "forecast_fallback_method": merged["_forecast_fallback_method"],
         "proxy_fallback_used": merged["_proxy_fallback_used"].astype(bool),
         "unsafe_native_proxy_executed": merged["_unsafe_native_proxy_executed"].astype(bool),
+        **{
+            column: merged[f"_source_{column}"]
+            for column in NATIVE_HORIZON_PROVENANCE_COLUMNS
+        },
     })
     return _with_forecast_provenance(attach_ledger_context(out, ledger))
 
@@ -485,6 +674,54 @@ def _validate_one_model_archive(archive: pd.DataFrame, ledger: pd.DataFrame, mod
         rows.append({"row": None, "violation": "forecast_id_not_in_ledger", "details": ",".join(extra[:10])})
     if len(archive) != len(ledger_ids):
         rows.append({"row": None, "violation": "row_count_mismatch", "details": f"expected={len(ledger_ids)} actual={len(archive)}"})
+    missing_native_columns = sorted(
+        set(NATIVE_HORIZON_PROVENANCE_COLUMNS) - set(archive.columns)
+    )
+    if missing_native_columns:
+        rows.append(
+            {
+                "row": None,
+                "violation": "missing_native_horizon_provenance",
+                "details": ",".join(missing_native_columns),
+            }
+        )
+    else:
+        origin = pd.to_datetime(archive["forecast_origin"], errors="coerce", utc=True)
+        target = pd.to_datetime(archive["target_time"], errors="coerce", utc=True)
+        last_released = pd.to_datetime(
+            archive["last_released_target_time"], errors="coerce", utc=True
+        )
+        forecasted_target = pd.to_datetime(
+            archive["forecasted_native_target_time"], errors="coerce", utc=True
+        )
+        native_numeric = pd.to_numeric(
+            archive["native_horizon_steps"], errors="coerce"
+        )
+        native_valid = (
+            native_numeric.notna()
+            & np.isfinite(native_numeric)
+            & native_numeric.ge(1)
+            & native_numeric.eq(np.floor(native_numeric))
+        )
+        checks = {
+            "invalid_last_released_target_time": last_released.isna()
+            | origin.isna()
+            | last_released.gt(origin),
+            "invalid_native_horizon_steps": ~native_valid,
+            "forecasted_native_target_mismatch": forecasted_target.isna()
+            | target.isna()
+            | forecasted_target.ne(target),
+        }
+        for violation, mask in checks.items():
+            if mask.any():
+                bad_ids = archive.loc[mask, "forecast_id"].astype(str).head(10).tolist()
+                rows.append(
+                    {
+                        "row": None,
+                        "violation": violation,
+                        "details": ",".join(bad_ids),
+                    }
+                )
     return pd.DataFrame(rows, columns=["row", "violation", "details"])
 
 
@@ -1267,6 +1504,10 @@ def main(argv: list[str] | None = None) -> int:
     if unknown_force:
         raise SystemExit(f"--force-model-ids contains models outside this build: {unknown_force}")
 
+    native_horizon_provenance_by_id = _build_native_horizon_provenance(
+        ledger, panel
+    )
+
     print(
         "phase20_archive_start "
         f"models={len(model_ids)} ledger_rows={len(ledger)} "
@@ -1303,7 +1544,12 @@ def main(argv: list[str] | None = None) -> int:
             import_model_forecasts=bool(args.import_model_forecasts),
             model_forecast_runs_root=model_forecast_runs_root,
         )
-        archive = _with_forecast_provenance(attach_ledger_context(archive, ledger))
+        archive = _attach_native_horizon_provenance(
+            _with_forecast_provenance(attach_ledger_context(archive, ledger)),
+            ledger,
+            panel,
+            provenance_by_id=native_horizon_provenance_by_id,
+        )
         runtime = round(time.time() - start, 6)
         violations = _validate_one_model_archive(archive, ledger, model_id)
         if not violations.empty:

@@ -11,7 +11,102 @@ FORECAST_ARCHIVE_REQUIRED_COLUMNS = [
 FORECAST_ARCHIVE_CONTEXT_COLUMNS = [
     "protocol_version", "natural_event_id", "mode", "mode_kind", "forecast_strategy",
 ]
+NATIVE_HORIZON_PROVENANCE_COLUMNS = [
+    "last_released_target_time",
+    "native_horizon_steps",
+    "forecasted_native_target_time",
+]
 FORECAST_ARCHIVE_COLUMNS = [*FORECAST_ARCHIVE_REQUIRED_COLUMNS, *FORECAST_ARCHIVE_CONTEXT_COLUMNS]
+
+
+def validate_native_horizon_provenance(
+    archive: pd.DataFrame,
+    ledger: pd.DataFrame,
+) -> pd.DataFrame:
+    """Fail closed on release-lag forecasts whose native target is unauditable."""
+
+    columns = set(archive.columns)
+    present = columns.intersection(NATIVE_HORIZON_PROVENANCE_COLUMNS)
+    lagged = False
+    if "release_lag_steps" in ledger.columns:
+        lag = pd.to_numeric(ledger["release_lag_steps"], errors="coerce")
+        lagged = bool(lag.fillna(0).gt(0).any())
+    if present and len(present) != len(NATIVE_HORIZON_PROVENANCE_COLUMNS):
+        missing = sorted(set(NATIVE_HORIZON_PROVENANCE_COLUMNS) - present)
+        return pd.DataFrame(
+            [{"row": None, "violation": "missing_native_horizon_columns", "details": ",".join(missing)}]
+        )
+    if lagged and not present:
+        return pd.DataFrame(
+            [{
+                "row": None,
+                "violation": "missing_native_horizon_columns",
+                "details": ",".join(NATIVE_HORIZON_PROVENANCE_COLUMNS),
+            }]
+        )
+    if not present:
+        return pd.DataFrame(columns=["row", "violation", "details"])
+
+    required_ledger = {"forecast_id", "forecast_origin", "target_time", "horizon"}
+    missing_ledger = sorted(required_ledger - set(ledger.columns))
+    if missing_ledger:
+        return pd.DataFrame(
+            [{"row": None, "violation": "missing_native_horizon_ledger_columns", "details": ",".join(missing_ledger)}]
+        )
+
+    ledger_meta = ledger[list(required_ledger)].copy()
+    ledger_meta["forecast_id"] = ledger_meta["forecast_id"].astype(str)
+    ledger_meta = ledger_meta.drop_duplicates("forecast_id")
+    work = archive[["forecast_id", *NATIVE_HORIZON_PROVENANCE_COLUMNS]].copy()
+    work["forecast_id"] = work["forecast_id"].astype(str)
+    work = work.merge(
+        ledger_meta,
+        on="forecast_id",
+        how="left",
+        validate="many_to_one",
+        indicator=True,
+    )
+    violations: list[dict[str, object]] = []
+
+    def record(name: str, mask: pd.Series) -> None:
+        selected = mask.fillna(True).astype(bool)
+        for idx in selected.index[selected.to_numpy()]:
+            violations.append(
+                {
+                    "row": int(idx),
+                    "violation": name,
+                    "details": str(work.loc[idx, "forecast_id"]),
+                }
+            )
+
+    record("native_horizon_forecast_id_not_in_ledger", work["_merge"].ne("both"))
+    known = work[work["_merge"].eq("both")].copy()
+    if known.empty:
+        return pd.DataFrame(violations, columns=["row", "violation", "details"])
+
+    origin = pd.to_datetime(known["forecast_origin"], errors="coerce", utc=True)
+    target = pd.to_datetime(known["target_time"], errors="coerce", utc=True)
+    last = pd.to_datetime(known["last_released_target_time"], errors="coerce", utc=True)
+    forecasted = pd.to_datetime(known["forecasted_native_target_time"], errors="coerce", utc=True)
+    native_raw = pd.to_numeric(known["native_horizon_steps"], errors="coerce")
+    nominal_raw = pd.to_numeric(known["horizon"], errors="coerce")
+    native_valid = native_raw.notna() & native_raw.gt(0) & np.isclose(native_raw, np.round(native_raw))
+    nominal_valid = nominal_raw.notna() & nominal_raw.gt(0) & np.isclose(nominal_raw, np.round(nominal_raw))
+
+    record("invalid_last_released_target_time", known["last_released_target_time"].isna() | last.isna())
+    record("invalid_forecasted_native_target_time", known["forecasted_native_target_time"].isna() | forecasted.isna())
+    record("invalid_native_horizon_steps", ~native_valid)
+    record("last_released_target_after_origin", last.gt(origin))
+    record("forecasted_native_target_mismatch", forecasted.ne(target))
+
+    timing_valid = native_valid & nominal_valid & origin.notna() & target.notna() & last.notna()
+    delta_nominal = (target - origin).dt.total_seconds()
+    cadence_seconds = delta_nominal / nominal_raw
+    timing_valid &= cadence_seconds.gt(0) & np.isfinite(cadence_seconds)
+    expected = last + pd.to_timedelta(native_raw * cadence_seconds, unit="s")
+    record("native_horizon_target_mismatch", timing_valid & expected.ne(target))
+    record("invalid_native_horizon_timing", ~timing_valid)
+    return pd.DataFrame(violations, columns=["row", "violation", "details"])
 
 
 def attach_ledger_context(archive: pd.DataFrame, ledger: pd.DataFrame) -> pd.DataFrame:
@@ -55,6 +150,9 @@ def validate_forecast_archive(archive: pd.DataFrame, ledger: pd.DataFrame, *, re
         return pd.DataFrame([{"row": None, "violation": "missing_columns", "details": ",".join(missing)}])
     if archive.empty:
         return pd.DataFrame([{"row": None, "violation": "empty_archive", "details": "archive has no rows"}])
+    native_violations = validate_native_horizon_provenance(archive, ledger)
+    if not native_violations.empty:
+        violations.extend(native_violations.to_dict("records"))
     key_cols = ["forecast_id", "model_id", "particle_id"]
     dup = archive.duplicated(key_cols)
     if dup.any():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,15 @@ class SeriesHistory:
     times: np.ndarray
     releases: np.ndarray
     values: np.ndarray
+
+
+@dataclass(frozen=True)
+class NativeTargetRequest:
+    nominal_horizon: int
+    native_horizon_steps: int
+    last_released_target_time: pd.Timestamp
+    target_time: pd.Timestamp
+    forecasted_native_target_time: pd.Timestamp
 
 
 def canonical_model_name(model: str) -> str:
@@ -170,13 +180,79 @@ def build_history_index(panel: pd.DataFrame, manifest_row: pd.Series, ledger: pd
     return index
 
 
-def values_until_origin(series: SeriesHistory, origin: pd.Timestamp) -> np.ndarray:
+def released_history_until_origin(
+    series: SeriesHistory,
+    origin: pd.Timestamp,
+) -> SeriesHistory:
     if pd.isna(origin):
-        return np.asarray([], dtype=float)
+        empty_time = np.asarray([], dtype="datetime64[ns]")
+        return SeriesHistory(
+            times=empty_time,
+            releases=empty_time,
+            values=np.asarray([], dtype=float),
+        )
     origin_np = np.datetime64(pd.Timestamp(origin), "ns")
-    visible = (series.times <= origin_np) & (series.releases <= origin_np)
-    values = series.values[visible]
-    return values[np.isfinite(values)]
+    visible = (
+        (series.times <= origin_np)
+        & (series.releases <= origin_np)
+        & np.isfinite(series.values)
+    )
+    return SeriesHistory(
+        times=series.times[visible],
+        releases=series.releases[visible],
+        values=series.values[visible],
+    )
+
+
+def values_until_origin(series: SeriesHistory, origin: pd.Timestamp) -> np.ndarray:
+    return released_history_until_origin(series, origin).values
+
+
+def native_target_request(
+    history: SeriesHistory,
+    *,
+    target: pd.Timestamp,
+    nominal_horizon: int,
+    cadence_days: int,
+) -> NativeTargetRequest:
+    """Resolve one ledger target from the last finite released observation."""
+
+    cadence_days = int(cadence_days)
+    if cadence_days <= 0:
+        raise ValueError(f"cadence_days must be positive, got {cadence_days}")
+    if len(history.times) == 0 or len(history.values) == 0:
+        raise ValueError("cannot resolve native horizon from empty released history")
+    target = pd.to_datetime(target, errors="coerce")
+    if pd.isna(target):
+        raise ValueError("target_time parse failed")
+    last_released_target_time = pd.Timestamp(history.times[-1])
+    cadence = pd.Timedelta(days=cadence_days)
+    native_float = (pd.Timestamp(target) - last_released_target_time) / cadence
+    native_horizon = int(round(float(native_float)))
+    if native_horizon < 1 or not math.isclose(
+        float(native_float), float(native_horizon), abs_tol=1e-9
+    ):
+        raise ValueError(
+            "target_time is not a positive native-cadence step after the last "
+            "finite released target: "
+            f"last_released_target_time={format_date(last_released_target_time)} "
+            f"target_time={format_date(pd.Timestamp(target))} "
+            f"cadence_days={cadence_days}"
+        )
+    forecasted_target = last_released_target_time + native_horizon * cadence
+    if pd.Timestamp(forecasted_target) != pd.Timestamp(target):
+        raise ValueError(
+            "native target-date assertion failed: "
+            f"forecasted_native_target_time={format_date(forecasted_target)} "
+            f"ledger_target_time={format_date(pd.Timestamp(target))}"
+        )
+    return NativeTargetRequest(
+        nominal_horizon=int(nominal_horizon),
+        native_horizon_steps=native_horizon,
+        last_released_target_time=last_released_target_time,
+        target_time=pd.Timestamp(target),
+        forecasted_native_target_time=pd.Timestamp(forecasted_target),
+    )
 
 
 def seasonal_naive_for_target(
@@ -385,10 +461,21 @@ def run_baseline_from_manifest(
             horizon = int(pd.to_numeric(event["horizon"], errors="raise"))
             key = (entity_id, component)
             series = history_index.get(key)
-            values = values_until_origin(series, origin) if series is not None else np.asarray([], dtype=float)
+            released_history = (
+                released_history_until_origin(series, origin)
+                if series is not None
+                else None
+            )
+            values = (
+                released_history.values
+                if released_history is not None
+                else np.asarray([], dtype=float)
+            )
             reason = ""
             if pd.isna(origin):
                 reason = "forecast_origin parse failed"
+            elif pd.isna(target):
+                reason = "target_time parse failed"
             elif series is None:
                 reason = "no panel series for entity/component"
             elif len(values) == 0:
@@ -401,6 +488,24 @@ def run_baseline_from_manifest(
                     "component": component,
                     "forecast_origin": str(event.get("forecast_origin", "")),
                     "reason": reason,
+                })
+                continue
+
+            try:
+                request = native_target_request(
+                    released_history,
+                    target=target,
+                    nominal_horizon=horizon,
+                    cadence_days=cadence_days,
+                )
+            except Exception as exc:
+                blockers.append({
+                    "dataset_key": dataset_key,
+                    "ledger_row_index": int(ledger_idx),
+                    "entity_id": entity_id,
+                    "component": component,
+                    "forecast_origin": str(event.get("forecast_origin", "")),
+                    "reason": f"native horizon resolution failed: {type(exc).__name__}: {exc}",
                 })
                 continue
 
@@ -430,11 +535,13 @@ def run_baseline_from_manifest(
             else:
                 if strategy == RECURSIVE_ROLLOUT:
                     recursive_values = np.asarray(values, dtype=float)
-                    recursive_times = np.asarray([], dtype="datetime64[ns]")
+                    recursive_times = np.asarray(
+                        released_history.times, dtype="datetime64[ns]"
+                    )
                     fallback = False
                     pred = float(recursive_values[-1])
                     sigma = residual_sigma(recursive_values, pred)
-                    for _step in range(1, horizon + 1):
+                    for _step in range(1, request.native_horizon_steps + 1):
                         pred, sigma, step_fallback = predict_from_history(
                             model_name,
                             recursive_values,
@@ -449,10 +556,21 @@ def run_baseline_from_manifest(
                             cadence_days=int(manifest_row["cadence_days"]),
                         )
                 else:
-                    pred, sigma, fallback = predict_from_history(model_name, values, horizon, season_length)
+                    pred, sigma, fallback = predict_from_history(
+                        model_name,
+                        values,
+                        request.native_horizon_steps,
+                        season_length,
+                    )
             if fallback:
                 fallback_counts[dataset_key] += 1
             sigma = max(float(sigma), 1e-6)
+            if pd.Timestamp(request.forecasted_native_target_time) != pd.Timestamp(target):
+                raise RuntimeError(
+                    "native target-date assertion failed immediately before archive write: "
+                    f"forecasted={format_date(request.forecasted_native_target_time)} "
+                    f"ledger={format_date(target)}"
+                )
             out_row = {
                 "dataset_key": dataset_key,
                 "dataset": str(event["dataset"]) if "dataset" in ledger.columns else str(manifest_row["dataset"]),
@@ -473,6 +591,13 @@ def run_baseline_from_manifest(
                 "target_time": format_date(target),
                 "component": component,
                 "horizon": horizon,
+                "last_released_target_time": format_date(
+                    request.last_released_target_time
+                ),
+                "native_horizon_steps": request.native_horizon_steps,
+                "forecasted_native_target_time": format_date(
+                    request.forecasted_native_target_time
+                ),
                 "y_true": float(y_true) if np.isfinite(y_true) else np.nan,
                 "pred_mean": float(pred),
                 "pred_lower_50": float(pred - Z50 * sigma),
@@ -605,10 +730,20 @@ def run_baseline_from_manifest(
             "history uses only panel_time <= forecast_origin and "
             "release_time <= forecast_origin"
         ),
+        "native_horizon_rule": (
+            "native_horizon_steps=(target_time-last_released_target_time)/cadence; "
+            "forecasted_native_target_time must equal ledger target_time before archive write"
+        ),
+        "native_horizon_audit_columns": [
+            "last_released_target_time",
+            "native_horizon_steps",
+            "forecasted_native_target_time",
+        ],
         "forecast_strategy_rule": (
-            "direct requests the native requested horizon; recursive_rollout repeatedly requests h=1 "
-            "and appends only predicted means; seasonal_naive always uses the actual target "
-            "timestamp minus one cadence-specific season"
+            "last_value direct uses the target-date-derived native horizon; last_value "
+            "recursive_rollout repeatedly requests h=1 through that native horizon and appends "
+            "only predicted means; seasonal_naive retains its actual target timestamp minus one "
+            "cadence-specific season lookup"
         ),
         "seasonal_unavailability_policy": (
             "only provenance-marked train structural prefixes may use an alignment placeholder; "

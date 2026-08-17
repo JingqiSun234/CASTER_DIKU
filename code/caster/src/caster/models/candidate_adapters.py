@@ -244,6 +244,125 @@ def _cadence_days_from_times(times: np.ndarray | None, default: int = 1) -> int:
     return max(1, int(round(float(dt.median()))))
 
 
+def _as_naive_timestamp(value: object, *, field: str) -> pd.Timestamp:
+    timestamp = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(timestamp):
+        raise ValueError(f"{field} must be a valid timestamp, got {value!r}")
+    return pd.Timestamp(timestamp).tz_convert(None)
+
+
+def _series_cadence(
+    panel: pd.DataFrame,
+    entity_id: str,
+    component: str,
+    origin: pd.Timestamp,
+    ledger_group: pd.DataFrame,
+) -> pd.Timedelta:
+    """Return the target cadence without using target values after ``origin``.
+
+    The ledger's origin-to-target schedule declares the cadence without
+    exposing any target values, so it is used first.  If that declaration is
+    unavailable, the historical observation grid is used with missing target
+    rows deliberately retained.  Thus a missing released value cannot make a
+    weekly series look biweekly.
+    """
+
+    schedule = ledger_group[["horizon", "target_time"]].copy()
+    schedule["horizon"] = pd.to_numeric(schedule["horizon"], errors="coerce")
+    schedule["target_time"] = pd.to_datetime(
+        schedule["target_time"], errors="coerce", utc=True
+    ).dt.tz_convert(None)
+    schedule = schedule.dropna().sort_values("horizon")
+    schedule_candidates_ns: list[int] = []
+    for (_, left), (_, right) in zip(schedule.iloc[:-1].iterrows(), schedule.iloc[1:].iterrows()):
+        horizon_delta = int(right["horizon"] - left["horizon"])
+        time_delta = pd.Timestamp(right["target_time"]) - pd.Timestamp(left["target_time"])
+        if horizon_delta > 0 and time_delta > pd.Timedelta(0):
+            quotient, remainder = divmod(int(time_delta.value), horizon_delta)
+            if remainder == 0 and quotient > 0:
+                schedule_candidates_ns.append(quotient)
+
+    for _, event in schedule.iterrows():
+        nominal_horizon = int(event["horizon"])
+        time_delta = pd.Timestamp(event["target_time"]) - pd.Timestamp(origin)
+        if nominal_horizon > 0 and time_delta > pd.Timedelta(0):
+            quotient, remainder = divmod(int(time_delta.value), nominal_horizon)
+            if remainder == 0 and quotient > 0:
+                schedule_candidates_ns.append(quotient)
+
+    if schedule_candidates_ns:
+        unique_schedule_cadences = set(schedule_candidates_ns)
+        if len(unique_schedule_cadences) != 1:
+            raise ValueError(
+                "ledger target schedule has inconsistent cadence for "
+                f"entity={entity_id} component={component} origin={origin}: "
+                f"{sorted(unique_schedule_cadences)}"
+            )
+        return pd.Timedelta(schedule_candidates_ns[0], unit="ns")
+
+    subset = panel[
+        (panel["entity_id"].astype(str) == str(entity_id))
+        & (panel["__time__"] <= pd.Timestamp(origin))
+    ]
+    if "component" in subset.columns and ({"value", "observed_value"} & set(subset.columns)):
+        subset = subset[subset["component"].astype(str) == str(component)]
+    grid = pd.Series(pd.to_datetime(subset["__time__"], errors="coerce")).dropna()
+    grid = grid.drop_duplicates().sort_values()
+    grid_diffs = grid.diff().dropna()
+    grid_diffs = grid_diffs[grid_diffs > pd.Timedelta(0)]
+    candidates_ns: list[int] = [int(delta.value) for delta in grid_diffs]
+
+    if not candidates_ns:
+        raise ValueError(
+            "cannot identify target cadence for "
+            f"entity={entity_id} component={component} origin={pd.Timestamp(origin)}"
+        )
+    cadence_ns = int(np.median(np.asarray(candidates_ns, dtype=np.int64)))
+    if cadence_ns <= 0:
+        raise ValueError("target cadence must be positive")
+    return pd.Timedelta(cadence_ns, unit="ns")
+
+
+@dataclass(frozen=True)
+class _NativeHorizon:
+    last_released_target_time: pd.Timestamp
+    native_horizon_steps: int
+    forecasted_native_target_time: pd.Timestamp
+
+
+def _native_horizon_for_event(
+    *,
+    last_released_target_time: pd.Timestamp,
+    cadence: pd.Timedelta,
+    event: pd.Series,
+) -> _NativeHorizon:
+    target_time = _as_naive_timestamp(event["target_time"], field="target_time")
+    delta = target_time - pd.Timestamp(last_released_target_time)
+    if delta <= pd.Timedelta(0):
+        raise ValueError(
+            "ledger target must follow the last finite released target observation: "
+            f"last_released={last_released_target_time} target={target_time}"
+        )
+    native_steps, remainder = divmod(int(delta.value), int(cadence.value))
+    if remainder != 0 or native_steps < 1:
+        raise ValueError(
+            "ledger target is not on the native target cadence: "
+            f"last_released={last_released_target_time} target={target_time} "
+            f"cadence={cadence}"
+        )
+    forecasted_target = pd.Timestamp(last_released_target_time) + native_steps * cadence
+    if forecasted_target != target_time:
+        raise AssertionError(
+            "native forecast target does not equal ledger target: "
+            f"forecasted={forecasted_target} ledger={target_time}"
+        )
+    return _NativeHorizon(
+        last_released_target_time=pd.Timestamp(last_released_target_time),
+        native_horizon_steps=int(native_steps),
+        forecasted_native_target_time=forecasted_target,
+    )
+
+
 def _target_time_from_horizon(times: np.ndarray | None, horizon: int) -> pd.Timestamp:
     if times is None or len(times) == 0:
         start = pd.Timestamp("2000-01-01")
@@ -267,10 +386,16 @@ def _append_recursive_mean(
     times: np.ndarray,
     values: np.ndarray,
     mean: float,
+    cadence: pd.Timedelta | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    cadence_days = _cadence_days_from_times(times, default=1)
+    cadence_delta = cadence or pd.Timedelta(
+        days=_cadence_days_from_times(times, default=1)
+    )
     if len(times):
-        next_time = np.asarray(times, dtype="datetime64[ns]")[-1] + np.timedelta64(cadence_days, "D")
+        next_time = (
+            np.asarray(times, dtype="datetime64[ns]")[-1]
+            + np.timedelta64(int(cadence_delta.value), "ns")
+        )
     else:
         next_time = np.datetime64("2000-01-01", "ns")
     return (
@@ -523,22 +648,54 @@ class SeriesForecastAdapter(BaseCandidateAdapter):
         series_index = _build_series_index(state.panel)
         for _, group in ledger.groupby(_strategy_group_columns(ledger), dropna=False, sort=False):
             representative = group.iloc[0]
-            origin = pd.Timestamp(representative["forecast_origin"])
+            origin = _as_naive_timestamp(
+                representative["forecast_origin"], field="forecast_origin"
+            )
             entity = _ledger_entity(representative)
             component = str(representative["component"])
             times, values = _series_from_index(series_index, entity, component, origin)
+            if len(times) == 0:
+                raise ValueError(
+                    "no finite released target observation at forecast origin for "
+                    f"entity={entity} component={component} origin={origin}"
+                )
+            last_released_target_time = pd.Timestamp(pd.to_datetime(times[-1]))
+            if last_released_target_time > origin:
+                raise AssertionError(
+                    "released target history extends beyond forecast origin: "
+                    f"last_released={last_released_target_time} origin={origin}"
+                )
+            cadence = _series_cadence(
+                state.panel, entity, component, origin, group
+            )
+            native_by_forecast_id = {
+                str(event["forecast_id"]): _native_horizon_for_event(
+                    last_released_target_time=last_released_target_time,
+                    cadence=cadence,
+                    event=event,
+                )
+                for _, event in group.iterrows()
+            }
             strategy = _forecast_strategy(representative)
-            requested = sorted(pd.to_numeric(group["horizon"], errors="raise").astype(int).unique())
-            path: dict[int, tuple[float, float]] = {}
+            predictions: dict[str, tuple[float, float]] = {}
             if strategy == "recursive_rollout":
                 recursive_times = np.asarray(times, dtype="datetime64[ns]")
                 recursive_values = np.asarray(values, dtype=float)
-                event_by_horizon = {
-                    int(pd.to_numeric(event["horizon"], errors="raise")): event
+                event_by_native_step = {
+                    native_by_forecast_id[str(event["forecast_id"])].native_horizon_steps: event
                     for _, event in group.iterrows()
                 }
-                for step in range(1, max(requested) + 1):
-                    step_event = event_by_horizon.get(step, representative)
+                if len(event_by_native_step) != len(group):
+                    raise ValueError(
+                        "multiple ledger events map to one native target step for "
+                        f"entity={entity} component={component} origin={origin}"
+                    )
+                max_native_step = max(event_by_native_step)
+                for step in range(1, max_native_step + 1):
+                    step_event = event_by_native_step.get(step, representative).copy()
+                    step_target = last_released_target_time + step * cadence
+                    step_event["target_time"] = step_target
+                    step_event["horizon"] = step
                     mean, var = self.forecast_one_for_event(
                         state,
                         step_event,
@@ -547,21 +704,43 @@ class SeriesForecastAdapter(BaseCandidateAdapter):
                         recursive_times,
                         recursive_step=step,
                     )
-                    path[step] = (_nonneg(mean), float(max(var, 0.0)))
-                    recursive_times, recursive_values = _append_recursive_mean(recursive_times, recursive_values, mean)
+                    requested_event = event_by_native_step.get(step)
+                    if requested_event is not None:
+                        predictions[str(requested_event["forecast_id"])] = (
+                            _nonneg(mean),
+                            float(max(var, 0.0)),
+                        )
+                    recursive_times, recursive_values = _append_recursive_mean(
+                        recursive_times, recursive_values, mean, cadence=cadence
+                    )
+                    if pd.Timestamp(pd.to_datetime(recursive_times[-1])) != step_target:
+                        raise AssertionError(
+                            "recursive native timeline did not reach the expected target: "
+                            f"reached={pd.Timestamp(pd.to_datetime(recursive_times[-1]))} "
+                            f"expected={step_target}"
+                        )
             else:
                 for _, event in group.iterrows():
-                    horizon = int(pd.to_numeric(event["horizon"], errors="raise"))
-                    path[horizon] = self.forecast_one_for_event(
+                    forecast_id = str(event["forecast_id"])
+                    native_horizon = native_by_forecast_id[forecast_id]
+                    predictions[forecast_id] = self.forecast_one_for_event(
                         state,
                         event,
                         values,
-                        horizon,
+                        native_horizon.native_horizon_steps,
                         times,
                     )
             for _, e in group.iterrows():
                 horizon = int(pd.to_numeric(e["horizon"], errors="raise"))
-                mean, var = path[horizon]
+                forecast_id = str(e["forecast_id"])
+                mean, var = predictions[forecast_id]
+                native_horizon = native_by_forecast_id[forecast_id]
+                ledger_target = _as_naive_timestamp(e["target_time"], field="target_time")
+                if native_horizon.forecasted_native_target_time != ledger_target:
+                    raise AssertionError(
+                        "forecasted native target does not equal ledger target for "
+                        f"forecast_id={forecast_id}"
+                    )
                 row = {
                     "dataset": str(e.get("dataset", "dataset")),
                     "model_id": self.model_id,
@@ -577,6 +756,9 @@ class SeriesForecastAdapter(BaseCandidateAdapter):
                     "pred_var": float(max(var, 0.0)),
                     "generated_at": e["forecast_origin"],
                     "features_available_until": e["forecast_origin"],
+                    "last_released_target_time": native_horizon.last_released_target_time,
+                    "native_horizon_steps": native_horizon.native_horizon_steps,
+                    "forecasted_native_target_time": native_horizon.forecasted_native_target_time,
                 }
                 if state.covariate_index is not None:
                     signal = state.covariate_index.signal(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 import warnings
 from collections.abc import Callable
@@ -67,6 +68,14 @@ class HistorySlice:
     values: np.ndarray
 
 
+@dataclass(frozen=True)
+class NativeTargetRequest:
+    nominal_horizon: int
+    native_horizon_steps: int
+    target_time: pd.Timestamp
+    forecasted_native_target_time: pd.Timestamp
+
+
 def history_until_origin(series, origin: pd.Timestamp) -> HistorySlice:
     if pd.isna(origin):
         return HistorySlice(np.asarray([], dtype="datetime64[ns]"), np.asarray([], dtype=float))
@@ -76,6 +85,71 @@ def history_until_origin(series, origin: pd.Timestamp) -> HistorySlice:
     values = series.values[visible]
     mask = np.isfinite(values)
     return HistorySlice(times=times[mask], values=values[mask])
+
+
+def native_target_requests(
+    group: pd.DataFrame,
+    history: HistorySlice,
+    cadence_days: int,
+) -> tuple[pd.Timestamp, dict[int, NativeTargetRequest], int]:
+    """Resolve ledger targets against the last finite, released target value.
+
+    Ledger horizons are measured from the forecast origin.  A model's native
+    horizon is instead measured from the final target observation admitted by
+    release gating.  These coincide for no-lag panels but need not coincide for
+    release-lagged or intermittently missing targets.
+    """
+
+    cadence_days = int(cadence_days)
+    if cadence_days <= 0:
+        raise ValueError(f"cadence_days must be positive, got {cadence_days}")
+    if len(history.times) == 0 or len(history.values) == 0:
+        raise ValueError("cannot resolve native horizons from empty released history")
+    last_released_target_time = pd.Timestamp(history.times[-1])
+    cadence = pd.Timedelta(days=cadence_days)
+    requests: dict[int, NativeTargetRequest] = {}
+    max_native_horizon = 0
+    for _, event in group.iterrows():
+        nominal_horizon = int(pd.to_numeric(event["horizon"], errors="raise"))
+        target = pd.to_datetime(event["target_time"], errors="coerce")
+        if pd.isna(target):
+            raise ValueError(f"target_time parse failed: {event['target_time']}")
+        native_float = (pd.Timestamp(target) - last_released_target_time) / cadence
+        native_horizon = int(round(float(native_float)))
+        if native_horizon < 1 or not math.isclose(
+            float(native_float), float(native_horizon), abs_tol=1e-9
+        ):
+            raise ValueError(
+                "target_time is not a positive native-cadence step after the last "
+                "finite released target: "
+                f"last_released_target_time={format_date(last_released_target_time)} "
+                f"target_time={format_date(pd.Timestamp(target))} "
+                f"cadence_days={cadence_days}"
+            )
+        forecasted_target = last_released_target_time + native_horizon * cadence
+        if pd.Timestamp(forecasted_target) != pd.Timestamp(target):
+            raise ValueError(
+                "native target-date assertion failed: "
+                f"forecasted_native_target_time={format_date(forecasted_target)} "
+                f"ledger_target_time={format_date(pd.Timestamp(target))}"
+            )
+        request = NativeTargetRequest(
+            nominal_horizon=nominal_horizon,
+            native_horizon_steps=native_horizon,
+            target_time=pd.Timestamp(target),
+            forecasted_native_target_time=pd.Timestamp(forecasted_target),
+        )
+        previous = requests.get(nominal_horizon)
+        if previous is not None and previous != request:
+            raise ValueError(
+                f"conflicting target requests for nominal horizon {nominal_horizon}: "
+                f"{previous} vs {request}"
+            )
+        requests[nominal_horizon] = request
+        max_native_horizon = max(max_native_horizon, native_horizon)
+    if not requests:
+        raise ValueError("empty target request group")
+    return last_released_target_time, requests, max_native_horizon
 
 
 def fallback_predictions(values: np.ndarray, horizons: list[int]) -> dict[int, float]:
@@ -471,11 +545,7 @@ def run_external_forecaster_from_manifest(
         checkpoint_training = checkpoint_dir / f"{model_name}.{dataset_key}.training.csv"
         checkpoint_metadata = checkpoint_dir / f"{model_name}.{dataset_key}.json"
         checkpoint_identity = {
-            "schema": (
-                "caster_external_forecast_checkpoint_v2_model_config"
-                if backend == "prophet"
-                else "caster_external_forecast_checkpoint_v1"
-            ),
+            "schema": "caster_external_forecast_checkpoint_v3_native_horizon",
             "model": model_name,
             "backend": backend,
             "dataset_key": dataset_key,
@@ -484,6 +554,9 @@ def run_external_forecaster_from_manifest(
             "ledger_sha256": sha256_file(ledger_path),
             "runner_sha256": sha256_file(Path(__file__)),
             "min_train_rows": effective_min_train_rows,
+            "native_horizon_policy": (
+                "target_date_minus_last_finite_released_target_date"
+            ),
         }
         if backend == "prophet":
             checkpoint_identity["model_config"] = canonical_model_config
@@ -510,6 +583,7 @@ def run_external_forecaster_from_manifest(
                     )
                     for column in (
                         "horizon",
+                        "native_horizon_steps",
                         "y_true",
                         "pred_mean",
                         "pred_lower_50",
@@ -625,8 +699,8 @@ def run_external_forecaster_from_manifest(
             origin = pd.to_datetime(origin_text, errors="coerce")
             series = history_index.get((entity_id, component))
             hist = history_until_origin(series, origin) if series is not None else HistorySlice(np.asarray([], dtype="datetime64[ns]"), np.asarray([], dtype=float))
-            max_horizon = int(pd.to_numeric(group["horizon"], errors="raise").max())
-            target_dates_by_horizon = {
+            max_nominal_horizon = int(pd.to_numeric(group["horizon"], errors="raise").max())
+            target_dates_by_nominal_horizon = {
                 int(pd.to_numeric(event["horizon"], errors="raise")): pd.to_datetime(event["target_time"], errors="coerce")
                 for _, event in group.iterrows()
             }
@@ -654,6 +728,30 @@ def run_external_forecaster_from_manifest(
                 })
                 continue
             try:
+                (
+                    last_released_target_time,
+                    requests_by_nominal_horizon,
+                    max_native_horizon,
+                ) = native_target_requests(
+                    group,
+                    hist,
+                    int(manifest_row["cadence_days"]),
+                )
+            except Exception as exc:
+                blockers.append({
+                    "dataset_key": dataset_key,
+                    "ledger_row_index": int(group.index[0]),
+                    "entity_id": entity_id,
+                    "component": component,
+                    "forecast_origin": origin_text,
+                    "reason": f"native horizon resolution failed: {type(exc).__name__}: {exc}",
+                })
+                continue
+            target_dates_by_native_horizon = {
+                request.native_horizon_steps: request.target_time
+                for request in requests_by_nominal_horizon.values()
+            }
+            try:
                 if len(hist.values) < effective_min_train_rows:
                     raise ValueError(
                         "insufficient training history: "
@@ -661,8 +759,8 @@ def run_external_forecaster_from_manifest(
                     )
                 if strategy == RECURSIVE_ROLLOUT:
                     def one_step(step_times: np.ndarray, step_values: np.ndarray, step: int):
-                        step_target = pd.Timestamp(origin) + pd.Timedelta(
-                            days=int(manifest_row["cadence_days"]) * int(step)
+                        step_target = pd.Timestamp(step_times[-1]) + pd.Timedelta(
+                            days=int(manifest_row["cadence_days"])
                         )
                         result = predictor(
                             model_name,
@@ -675,30 +773,71 @@ def run_external_forecaster_from_manifest(
                         means = result.means if isinstance(result, PredictionBundle) else dict(result)
                         return float(means[1]), result
 
-                    predictions, step_results = recursive_mean_path(
+                    native_predictions, step_results = recursive_mean_path(
                         times=hist.times,
                         values=hist.values,
-                        max_horizon=max_horizon,
+                        max_horizon=max_native_horizon,
                         cadence_days=int(manifest_row["cadence_days"]),
                         one_step=one_step,
                     )
+                    predictions = {
+                        nominal_horizon: float(
+                            native_predictions[request.native_horizon_steps]
+                        )
+                        for nominal_horizon, request in requests_by_nominal_horizon.items()
+                    }
                     prediction_result = None
                 else:
+                    # Prophet predicts explicit dates, so keep its established
+                    # nominal-key/date call contract. StatsForecast indexes its
+                    # vector by native steps and must be extended to the final
+                    # actual target date.
+                    predictor_max_horizon = (
+                        max_nominal_horizon
+                        if backend == "prophet"
+                        else max_native_horizon
+                    )
+                    predictor_target_dates = (
+                        target_dates_by_nominal_horizon
+                        if backend == "prophet"
+                        else target_dates_by_native_horizon
+                    )
                     prediction_result = predictor(
                         model_name,
                         hist.times,
                         hist.values,
-                        max_horizon,
-                        target_dates_by_horizon,
+                        predictor_max_horizon,
+                        predictor_target_dates,
                         season_length,
                     )
-                    predictions = {int(k): float(v) for k, v in (prediction_result.means.items() if isinstance(prediction_result, PredictionBundle) else dict(prediction_result).items())}
+                    predictor_means = {
+                        int(k): float(v)
+                        for k, v in (
+                            prediction_result.means.items()
+                            if isinstance(prediction_result, PredictionBundle)
+                            else dict(prediction_result).items()
+                        )
+                    }
+                    if backend == "prophet":
+                        predictions = {
+                            nominal_horizon: predictor_means[nominal_horizon]
+                            for nominal_horizon in requests_by_nominal_horizon
+                        }
+                    else:
+                        predictions = {
+                            nominal_horizon: predictor_means[
+                                request.native_horizon_steps
+                            ]
+                            for nominal_horizon, request in requests_by_nominal_horizon.items()
+                        }
                     step_results = {}
             except Exception as exc:
                 status = "fallback"
                 fallback_used = True
                 failure_reason = f"{type(exc).__name__}: {exc}"
-                predictions = fallback_predictions(hist.values, sorted(target_dates_by_horizon))
+                predictions = fallback_predictions(
+                    hist.values, sorted(target_dates_by_nominal_horizon)
+                )
                 prediction_result = None
                 failed_rows.append({
                     "dataset_key": dataset_key,
@@ -707,7 +846,9 @@ def run_external_forecaster_from_manifest(
                     "component": component,
                     "forecast_origin": origin_text,
                     "train_rows": int(len(hist.values)),
-                    "max_horizon": max_horizon,
+                    "max_horizon": max_native_horizon,
+                    "max_nominal_horizon": max_nominal_horizon,
+                    "max_native_horizon": max_native_horizon,
                     "failure_reason": failure_reason,
                     "fallback_method": "last_value",
                 })
@@ -720,7 +861,9 @@ def run_external_forecaster_from_manifest(
                 "component": component,
                 "forecast_origin": origin_text,
                 "train_rows": int(len(hist.values)),
-                "max_horizon": max_horizon,
+                "max_horizon": max_native_horizon,
+                "max_nominal_horizon": max_nominal_horizon,
+                "max_native_horizon": max_native_horizon,
                 "min_train_rows": effective_min_train_rows,
                 "status": status,
                 "runtime_seconds": runtime,
@@ -731,8 +874,15 @@ def run_external_forecaster_from_manifest(
             sigma = max(residual_sigma(hist.values, float(hist.values[-1])), 1e-6)
             for ledger_idx, event in group.iterrows():
                 horizon = int(pd.to_numeric(event["horizon"], errors="raise"))
+                request = requests_by_nominal_horizon[horizon]
                 pred = float(predictions[horizon])
                 target = pd.to_datetime(event["target_time"], errors="coerce")
+                if pd.Timestamp(request.forecasted_native_target_time) != pd.Timestamp(target):
+                    raise RuntimeError(
+                        "native target-date assertion failed immediately before archive write: "
+                        f"forecasted={format_date(request.forecasted_native_target_time)} "
+                        f"ledger={format_date(target)}"
+                    )
                 y_true = pd.to_numeric(pd.Series([event.get("observed_value")]), errors="coerce").iloc[0]
                 if parse_bool(event.get("observed_mask", True)) and not np.isfinite(y_true):
                     blockers.append({
@@ -753,6 +903,11 @@ def run_external_forecaster_from_manifest(
                     "target_time": format_date(target),
                     "component": component,
                     "horizon": horizon,
+                    "last_released_target_time": format_date(last_released_target_time),
+                    "native_horizon_steps": request.native_horizon_steps,
+                    "forecasted_native_target_time": format_date(
+                        request.forecasted_native_target_time
+                    ),
                     "y_true": float(y_true) if np.isfinite(y_true) else np.nan,
                     "pred_mean": pred,
                     "pred_lower_50": float(pred - Z50 * sigma),
@@ -781,17 +936,28 @@ def run_external_forecaster_from_manifest(
                             )
                         )
                     else:
-                        native_result = step_results.get(horizon) if strategy == RECURSIVE_ROLLOUT else prediction_result
+                        native_result = (
+                            step_results.get(request.native_horizon_steps)
+                            if strategy == RECURSIVE_ROLLOUT
+                            else prediction_result
+                        )
+                        prediction_key = (
+                            1
+                            if strategy == RECURSIVE_ROLLOUT
+                            else horizon
+                            if backend == "prophet"
+                            else request.native_horizon_steps
+                        )
                         means, availability, storage = native_rows_from_prediction(
                             native_root,
                             model_id=model_name,
                             origin=native_origin,
                             prediction_result=native_result,
-                            horizon=1 if strategy == RECURSIVE_ROLLOUT else horizon,
+                            horizon=prediction_key,
                         )
-                        if horizon not in means:
+                        if prediction_key not in means:
                             availability.blocker = "; ".join(
-                                x for x in [availability.blocker, f"missing forecast horizon {horizon} in native predictor output"] if x
+                                x for x in [availability.blocker, f"missing forecast horizon {prediction_key} in native predictor output"] if x
                             )
                         native_availability_rows.append(availability)
                         if storage is not None:
@@ -891,10 +1057,23 @@ def run_external_forecaster_from_manifest(
             else "explicit_override"
         ),
         "failed_series_path": "failed_series.csv" if failed_rows else "",
-        "no_leakage_rule": "history uses only panel_time <= forecast_origin",
+        "no_leakage_rule": (
+            "history uses only finite targets with panel_time <= forecast_origin "
+            "and target release_time <= forecast_origin"
+        ),
+        "native_horizon_rule": (
+            "native_horizon_steps=(target_time-last_released_target_time)/cadence; "
+            "forecasted_native_target_time must equal ledger target_time before archive write"
+        ),
+        "native_horizon_audit_columns": [
+            "last_released_target_time",
+            "native_horizon_steps",
+            "forecasted_native_target_time",
+        ],
         "forecast_strategy_rule": (
-            "direct makes one native multi-horizon call; recursive_rollout refits/calls h=1 at each step "
-            "after appending the prior predicted mean"
+            "StatsForecast direct predicts through the maximum native horizon; Prophet direct "
+            "continues to predict explicit ledger target dates. recursive_rollout calls h=1 "
+            "through the maximum native horizon after appending each prior predicted mean"
         ),
         "native_sidecars_enabled": bool(enable_native_sidecars),
         "native_sidecar_root": str(native_root) if native_root is not None else "",
